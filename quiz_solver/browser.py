@@ -280,14 +280,14 @@ def decode_content_multi_layer(content: str) -> tuple[str, int]:
 
 
 async def handle_spa_edge_cases(page: Page, session: Any) -> None:
-    \"\"\"Handle common SPA edge cases - fast version.\"\"\"
+    """Handle common SPA edge cases - fast version."""
     
     # Edge Case 1: Loading spinners/overlays - quick check only
     try:
-        spinners = await page.locator(\".loading, .spinner, [data-loading='true']\").all()
+        spinners = await page.locator(".loading, .spinner, [data-loading='true']").all()
         for spinner in spinners[:2]:  # Only check first 2
             try:
-                await spinner.wait_for(state=\"hidden\", timeout=2000)
+                await spinner.wait_for(state="hidden", timeout=2000)
             except Exception:
                 pass
     except Exception:
@@ -295,7 +295,7 @@ async def handle_spa_edge_cases(page: Page, session: Any) -> None:
     
     # Scroll to top
     try:
-        await page.evaluate(\"window.scrollTo(0, 0)\")
+        await page.evaluate("window.scrollTo(0, 0)")
     except Exception:
         pass
 
