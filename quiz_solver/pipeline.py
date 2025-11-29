@@ -535,11 +535,11 @@ async def solve_quiz_pipeline(
                                 answer = simple_analysis(df, effective_question)
                             else:
                                 logger.info(f"   ✓ Code execution successful")
-                    except Exception as e:
-                        logger.warning(f"   ⚠️ LLM analysis exception: {e}")
-                        answer = simple_analysis(df, effective_question)
-                    
-                    session.analysis_result = answer
+                        except Exception as e:
+                            logger.warning(f"   ⚠️ LLM analysis exception: {e}")
+                            answer = simple_analysis(df, effective_question)
+                        
+                        session.analysis_result = answer
                     
                 elif context_for_llm:
                     logger.info("   🤖 Using LLM to answer from context...")
