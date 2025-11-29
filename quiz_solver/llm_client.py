@@ -266,11 +266,32 @@ class LLMClient:
         if "usageMetadata" in data:
             self.token_tracker.gemini_used += data["usageMetadata"].get("totalTokenCount", 0)
         
-        # Parse Gemini response format
-        content = data["candidates"][0]["content"]["parts"][0]["text"]
-        logger.debug(f"Gemini (via aipipe) response: {content[:100]}...")
-        
-        return content or ""
+        # Parse Gemini response format with robust error handling
+        try:
+            candidates = data.get("candidates", [])
+            if not candidates:
+                error_msg = data.get("error", {}).get("message", "No candidates in response")
+                raise ValueError(f"Gemini API error: {error_msg}")
+            
+            content_obj = candidates[0].get("content", {})
+            parts = content_obj.get("parts", [])
+            if not parts:
+                # Sometimes Gemini returns empty parts, check for other fields
+                finish_reason = candidates[0].get("finishReason", "")
+                if finish_reason == "SAFETY":
+                    raise ValueError("Response blocked by safety filters")
+                raise ValueError("No parts in response content")
+            
+            content = parts[0].get("text", "")
+            if not content:
+                raise ValueError("Empty text in response")
+            
+            logger.debug(f"Gemini (via aipipe) response: {content[:100]}...")
+            return content
+            
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error(f"Failed to parse Gemini response: {e}, data: {data}")
+            raise ValueError(f"Invalid Gemini response structure: {e}")
     
     async def _generate_gemini_direct(
         self,

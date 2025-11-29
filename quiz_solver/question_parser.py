@@ -70,15 +70,20 @@ def extract_question_components(question_text: str, session: Any) -> QuestionCom
         matches = re.findall(pattern, question_text)
         components.instructions.extend(matches[:2])  # Take first 2 matches
     
-    # Infer answer format from question
-    if any(word in question_text.lower() for word in ['sum', 'total', 'average', 'count', 'percentage', 'how many', 'what is the']):
+    # Infer answer format from question - be conservative and prefer STRING
+    # Only use specific formats when we're very confident
+    question_lower = question_text.lower()
+    
+    # Check for explicit number-only answers
+    if any(phrase in question_lower for phrase in ['what is the sum', 'what is the total', 'what is the average', 'how many', 'what is the count']):
         components.answer_format = AnswerFormat.NUMBER
-    elif any(word in question_text.lower() for word in ['true', 'false', 'yes', 'no', 'is it']):
-        components.answer_format = AnswerFormat.BOOLEAN
-    elif any(word in question_text.lower() for word in ['chart', 'image', 'graph', 'plot', 'visualization']):
+    # Check for explicit chart/image answers
+    elif any(word in question_lower for word in ['chart', 'image', 'graph', 'plot', 'visualization', 'base64']):
         components.answer_format = AnswerFormat.BASE64_IMAGE
-    elif 'json' in question_text.lower():
+    # Check for explicit JSON format requirement
+    elif 'json' in question_lower and 'answer' in question_lower:
         components.answer_format = AnswerFormat.JSON
+    # Default to STRING - this is safest for command strings, codes, etc.
     else:
         components.answer_format = AnswerFormat.STRING
     
@@ -99,45 +104,71 @@ def extract_question_components(question_text: str, session: Any) -> QuestionCom
 
 
 def format_answer(answer: Any, expected_format: AnswerFormat) -> Any:
-    """Format answer according to expected format."""
+    """Format answer according to expected format.
+    
+    IMPORTANT: For STRING format, we preserve the original answer from LLM.
+    This is crucial for command strings, git commands, uv commands, etc.
+    """
     
     if answer is None:
         return None
+    
+    # First, clean up the answer string if needed
+    answer_str = str(answer).strip()
+    
+    # Remove markdown code block markers if present
+    if answer_str.startswith('```'):
+        lines = answer_str.split('\n')
+        # Remove first line (```python or ```) and last line (```)
+        if len(lines) > 2:
+            answer_str = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
+        answer_str = answer_str.strip()
     
     try:
         if expected_format == AnswerFormat.NUMBER:
             # Try to convert to number
             if isinstance(answer, (int, float)):
-                # Round to reasonable precision
                 if isinstance(answer, float):
                     return round(answer, 2)
                 return answer
             else:
-                # Try to parse string
-                cleaned = str(answer).strip().replace(',', '')
-                if '.' in cleaned:
-                    return round(float(cleaned), 2)
-                return int(cleaned)
+                # Try to parse string - extract first number
+                import re
+                cleaned = answer_str.replace(',', '')
+                # Try to find a number in the string
+                number_match = re.search(r'-?\d+\.?\d*', cleaned)
+                if number_match:
+                    num_str = number_match.group()
+                    if '.' in num_str:
+                        return round(float(num_str), 2)
+                    return int(num_str)
+                return answer_str  # Return as-is if no number found
         
         elif expected_format == AnswerFormat.BOOLEAN:
+            # Only convert to boolean if it's clearly a boolean answer
             if isinstance(answer, bool):
                 return answer
-            str_answer = str(answer).lower().strip()
-            return str_answer in ['true', 'yes', '1', 'correct']
+            lower = answer_str.lower()
+            if lower in ['true', 'false', 'yes', 'no']:
+                return lower in ['true', 'yes']
+            # Otherwise return as string - it's probably a command or code
+            return answer_str
         
         elif expected_format == AnswerFormat.JSON:
             import json
             if isinstance(answer, str):
-                return json.loads(answer)
+                try:
+                    return json.loads(answer_str)
+                except json.JSONDecodeError:
+                    return answer_str
             return answer
         
         elif expected_format == AnswerFormat.BASE64_IMAGE:
-            # Return as-is if already base64
-            return str(answer)
+            return answer_str
         
-        else:  # STRING
-            return str(answer).strip()
+        else:  # STRING - preserve as-is
+            return answer_str
     
     except Exception as e:
         logger.warning(f"Failed to format answer: {e}")
-        return str(answer)
+        return answer_str
