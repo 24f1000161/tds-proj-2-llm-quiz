@@ -113,6 +113,43 @@ async def download_and_parse_pdf(url: str) -> dict[str, Any]:
     return extracted
 
 
+async def download_and_parse_zip(url: str) -> dict[str, Any]:
+    """Download and parse ZIP files containing logs (JSONL format)."""
+    import zipfile
+    import json
+    
+    file_bytes = await download_file(url)
+    
+    result = {
+        "type": "zip",
+        "files": {},
+        "logs_data": []
+    }
+    
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            for name in zf.namelist():
+                with zf.open(name) as f:
+                    content = f.read().decode('utf-8')
+                    result["files"][name] = content
+                    
+                    # Parse JSONL (one JSON per line)
+                    for line in content.strip().split('\n'):
+                        line = line.strip()
+                        if line:
+                            try:
+                                entry = json.loads(line)
+                                result["logs_data"].append(entry)
+                            except json.JSONDecodeError:
+                                pass
+        
+        logger.info(f"Extracted ZIP: {len(result['files'])} files, {len(result['logs_data'])} log entries")
+    except Exception as e:
+        logger.warning(f"ZIP parsing failed: {e}")
+    
+    return result
+
+
 async def download_and_parse_file(url: str) -> Any:
     """Download and parse CSV, JSON, XML, TXT, or Excel files."""
     
@@ -648,6 +685,9 @@ async def fetch_all_data_sources(data_sources: list[str], session: Any) -> dict[
         try:
             if source_url.endswith('.pdf'):
                 fetched_data[source_url] = await download_and_parse_pdf(source_url)
+            elif source_url.endswith('.zip'):
+                # Handle ZIP files containing logs (JSONL format)
+                fetched_data[source_url] = await download_and_parse_zip(source_url)
             elif source_url.endswith(('.csv', '.json', '.xlsx', '.xls', '.xml', '.txt')):
                 fetched_data[source_url] = await download_and_parse_file(source_url)
             elif is_audio_url(source_url):

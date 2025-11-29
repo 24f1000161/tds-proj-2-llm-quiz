@@ -280,7 +280,7 @@ async def solve_quiz_pipeline(
                 
                 # Extended list of processable file extensions
                 PROCESSABLE_EXTENSIONS = [
-                    '.csv', '.json', '.xlsx', '.txt', '.pdf',  # Data files
+                    '.csv', '.json', '.xlsx', '.txt', '.pdf', '.zip',  # Data files
                     '.png', '.jpg', '.jpeg', '.gif', '.webp',  # Images
                     '.opus', '.mp3', '.wav', '.ogg', '.m4a',   # Audio
                     '.mp4', '.webm',                            # Video
@@ -366,6 +366,11 @@ async def solve_quiz_pipeline(
                                 # GitHub tree config - store for API call
                                 merged_context['github_config'] = data
                                 logger.info(f"     → GitHub config: {data.get('owner')}/{data.get('repo')}")
+                            elif data.get('type') == 'zip':
+                                # ZIP file with logs data
+                                merged_context['logs_data'] = data.get('logs_data', [])
+                                merged_context['zip_files'] = data.get('files', {})
+                                logger.info(f"     → ZIP: {len(data.get('logs_data', []))} log entries")
                             else:
                                 merged_context[f'data_{len(merged_context)}'] = data
                                 logger.info(f"     → Dict with keys: {list(data.keys())[:5]}")
@@ -416,6 +421,8 @@ async def solve_quiz_pipeline(
                 logger.info("")
                 logger.info("🔬 STAGE 7: Analysis & Answer Generation")
                 answer: Any = None
+                context_for_llm = ""  # Initialize here to avoid stale values from previous iterations
+                effective_question = raw_question  # Initialize here too
                 
                 # ===== SMART DIRECT EXTRACTION (bypass LLM when possible) =====
                 
@@ -488,6 +495,52 @@ async def solve_quiz_pipeline(
                     answer = merged_context['audio_transcript'].lower().strip()
                     logger.info(f"   ✓ Direct audio transcript: {answer}")
                 
+                # 5. UV http command construction
+                elif 'uv' in raw_question.lower() and 'http' in raw_question.lower() and 'get' in raw_question.lower():
+                    import re
+                    # Extract the URL from the question
+                    url_match = re.search(r'https://[^\s<>"\']+\.json\?email=', raw_question)
+                    if url_match:
+                        base_url = url_match.group(0)
+                        full_url = base_url + session.email
+                        answer = f'uv http get {full_url} -H "Accept: application/json"'
+                        logger.info(f"   ✓ UV command constructed: {answer}")
+                
+                # 6. Git commands for staging and committing
+                elif 'git' in raw_question.lower() and 'commit' in raw_question.lower():
+                    import re
+                    # Extract file name and commit message
+                    file_match = re.search(r'stage\s+(?:only\s+)?(\S+)', raw_question, re.IGNORECASE)
+                    msg_match = re.search(r'message\s+["\']([^"\']+)["\']', raw_question, re.IGNORECASE)
+                    if file_match and msg_match:
+                        filename = file_match.group(1)
+                        commit_msg = msg_match.group(1)
+                        answer = f'git add {filename}\ngit commit -m "{commit_msg}"'
+                        logger.info(f"   ✓ Git commands constructed: {answer}")
+                
+                # 7. Direct path extraction (when question explicitly states the answer)
+                elif 'correct relative link target is exactly' in raw_question.lower() or 'submit that exact string' in raw_question.lower():
+                    import re
+                    # Look for path patterns like /project2/something.md
+                    path_match = re.search(r'(/project\d*/[a-zA-Z0-9\-_.]+\.[a-zA-Z]+)', raw_question)
+                    if path_match:
+                        answer = path_match.group(1)
+                        logger.info(f"   ✓ Direct path extracted: {answer}")
+                
+                # 8. ZIP file with logs - sum bytes for download events
+                elif merged_context.get('logs_data') and 'sum' in raw_question.lower() and 'bytes' in raw_question.lower():
+                    logs_data = merged_context['logs_data']
+                    total_bytes = sum(entry.get('bytes', 0) for entry in logs_data if entry.get('event') == 'download')
+                    # Add email offset if mentioned
+                    if 'email' in raw_question.lower() and 'offset' in raw_question.lower() and 'mod 5' in raw_question.lower():
+                        email_length = len(session.email)
+                        offset = email_length % 5
+                        answer = total_bytes + offset
+                        logger.info(f"   ✓ Logs sum: {total_bytes} + offset {offset} = {answer}")
+                    else:
+                        answer = total_bytes
+                        logger.info(f"   ✓ Logs sum: {answer}")
+                
                 # ===== LLM-BASED ANALYSIS (when direct extraction not possible) =====
                 if answer is None:
                     # Build context string for LLM
@@ -541,29 +594,29 @@ async def solve_quiz_pipeline(
                         
                         session.analysis_result = answer
                     
-                elif context_for_llm:
-                    logger.info("   🤖 Using LLM to answer from context...")
-                    try:
-                        answer = await llm_client.answer_from_context(context_for_llm, effective_question)
-                        session.analysis_result = answer
-                        logger.info(f"   ✓ LLM answer: {str(answer)[:100]}...")
-                    except Exception as e:
-                        logger.warning(f"   ⚠️ LLM context analysis failed: {e}")
-                        # Try to extract answer from context directly
-                        answer = extract_answer_from_context(merged_context, effective_question)
-                        if answer:
-                            logger.info(f"   ✓ Extracted answer from context: {str(answer)[:100]}...")
-                else:
-                    logger.info("   🤖 No data available, asking LLM directly...")
-                    try:
-                        direct_answer = await llm_client.answer_from_context(
-                            f"Question page content:\n{effective_question}",
-                            effective_question
-                        )
-                        answer = direct_answer
-                        logger.info(f"   ✓ LLM direct answer: {str(answer)[:100]}...")
-                    except Exception as e:
-                        logger.warning(f"   ⚠️ LLM direct answer failed: {e}")
+                    elif context_for_llm:
+                        logger.info("   🤖 Using LLM to answer from context...")
+                        try:
+                            answer = await llm_client.answer_from_context(context_for_llm, effective_question)
+                            session.analysis_result = answer
+                            logger.info(f"   ✓ LLM answer: {str(answer)[:100]}...")
+                        except Exception as e:
+                            logger.warning(f"   ⚠️ LLM context analysis failed: {e}")
+                            # Try to extract answer from context directly
+                            answer = extract_answer_from_context(merged_context, effective_question)
+                            if answer:
+                                logger.info(f"   ✓ Extracted answer from context: {str(answer)[:100]}...")
+                    else:
+                        logger.info("   🤖 No data available, asking LLM directly...")
+                        try:
+                            direct_answer = await llm_client.answer_from_context(
+                                f"Question page content:\n{effective_question}",
+                                effective_question
+                            )
+                            answer = direct_answer
+                            logger.info(f"   ✓ LLM direct answer: {str(answer)[:100]}...")
+                        except Exception as e:
+                            logger.warning(f"   ⚠️ LLM direct answer failed: {e}")
                 
                 # UNIVERSAL FALLBACK: Apply for any empty answer (regardless of which branch we came from)
                 if not answer or (isinstance(answer, str) and not answer.strip()):
