@@ -220,7 +220,7 @@ class LLMClient:
         """Generate using Gemini via aipipe's native Gemini endpoint.
         
         Uses: https://aipipe.org/geminiv1beta/models/MODEL:generateContent
-        With: Authorization: Bearer header (same as OpenRouter)
+        Auth: Authorization: Bearer {AIPIPE_TOKEN}
         """
         
         if not self._http_client:
