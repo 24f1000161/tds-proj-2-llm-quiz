@@ -534,7 +534,7 @@ async def solve_quiz_pipeline(
                                 logger.info("   Falling back to simple analysis...")
                                 answer = simple_analysis(df, effective_question)
                             else:
-                            logger.info(f"   ✓ Code execution successful")
+                                logger.info(f"   ✓ Code execution successful")
                     except Exception as e:
                         logger.warning(f"   ⚠️ LLM analysis exception: {e}")
                         answer = simple_analysis(df, effective_question)
