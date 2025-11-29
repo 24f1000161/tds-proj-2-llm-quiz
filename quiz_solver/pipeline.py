@@ -349,6 +349,11 @@ async def solve_quiz_pipeline(
                             if data.get('type') == 'audio':
                                 merged_context['audio_transcript'] = data.get('transcript', '')
                                 logger.info(f"     → Audio transcript: {len(data.get('transcript', ''))} chars")
+                            elif data.get('type') == 'image':
+                                # Store image data with dominant color
+                                merged_context['image_description'] = data.get('description', '')
+                                merged_context['dominant_color'] = data.get('dominant_color', '')
+                                logger.info(f"     → Image: {len(data.get('description', ''))} chars, color: {data.get('dominant_color', 'N/A')}")
                             elif 'all_text' in data:
                                 merged_context['pdf_text'] = data.get('all_text', '')
                                 merged_context['pdf_tables'] = data.get('all_tables', [])
@@ -357,6 +362,10 @@ async def solve_quiz_pipeline(
                                 merged_context['webpage_text'] = data.get('text', '')
                                 merged_context['webpage_tables'] = data.get('tables', [])
                                 logger.info(f"     → Webpage: {len(data.get('text', ''))} chars, {len(data.get('tables', []))} tables")
+                            elif 'owner' in data and 'repo' in data and 'sha' in data:
+                                # GitHub tree config - store for API call
+                                merged_context['github_config'] = data
+                                logger.info(f"     → GitHub config: {data.get('owner')}/{data.get('repo')}")
                             else:
                                 merged_context[f'data_{len(merged_context)}'] = data
                                 logger.info(f"     → Dict with keys: {list(data.keys())[:5]}")
@@ -408,50 +417,123 @@ async def solve_quiz_pipeline(
                 logger.info("🔬 STAGE 7: Analysis & Answer Generation")
                 answer: Any = None
                 
-                # Build context string for LLM
-                context_for_llm = ""
-                if merged_context.get('scraped_page'):
-                    context_for_llm += f"\n=== SCRAPED PAGE CONTENT ===\n{merged_context['scraped_page'][:5000]}\n"
-                if merged_context.get('audio_transcript'):
-                    context_for_llm += f"\n=== AUDIO TRANSCRIPT ===\n{merged_context['audio_transcript']}\n"
-                if merged_context.get('pdf_text'):
-                    context_for_llm += f"\n=== PDF CONTENT ===\n{merged_context['pdf_text'][:5000]}\n"
-                if merged_context.get('webpage_text'):
-                    context_for_llm += f"\n=== WEBPAGE CONTENT ===\n{merged_context['webpage_text'][:3000]}\n"
-                if merged_context.get('text_content'):
-                    context_for_llm += f"\n=== TEXT CONTENT ===\n{merged_context['text_content'][:3000]}\n"
-                if merged_context.get('cutoff'):
-                    context_for_llm += f"\n=== CUTOFF VALUE ===\n{merged_context['cutoff']}\n"
+                # ===== SMART DIRECT EXTRACTION (bypass LLM when possible) =====
                 
-                # If we have an audio transcript, it likely contains the instructions
-                # Append it to the question text so LLM understands the task
-                effective_question = raw_question
-                if merged_context.get('audio_transcript'):
-                    effective_question = f"{raw_question}\n\n[AUDIO TRANSCRIPT INSTRUCTIONS]: {merged_context['audio_transcript']}"
-                    logger.info(f"   📝 Audio instructions appended to question")
+                # 1. Image dominant color question
+                if merged_context.get('dominant_color') and ('color' in raw_question.lower() or 'hex' in raw_question.lower() or 'rgb' in raw_question.lower()):
+                    answer = merged_context['dominant_color']
+                    logger.info(f"   ✓ Direct answer from image color: {answer}")
                 
-                # Use LLM to generate and execute analysis code
-                if df is not None and not df.empty:
-                    df_info = get_dataframe_info(df)
-                    logger.info(f"   DataFrame info: {df_info.get('shape')}, columns: {df_info.get('columns', [])[:5]}")
+                # 2. GitHub API tree counting
+                elif merged_context.get('github_config') and ('count' in raw_question.lower() or '.md' in raw_question.lower()):
+                    from .data_sourcing import call_github_api
+                    config = merged_context['github_config']
+                    count = await call_github_api(
+                        owner=config.get('owner', ''),
+                        repo=config.get('repo', ''),
+                        sha=config.get('sha', ''),
+                        path_prefix=config.get('pathPrefix', ''),
+                        extension=config.get('extension', '.md')
+                    )
+                    # Add email offset if mentioned
+                    if 'email' in raw_question.lower() and 'offset' in raw_question.lower():
+                        email_length = len(session.email)
+                        offset = email_length % 2
+                        answer = count + offset
+                        logger.info(f"   ✓ GitHub API count: {count} + offset {offset} = {answer}")
+                    else:
+                        answer = count
+                        logger.info(f"   ✓ GitHub API count: {answer}")
+                
+                # 3. CSV to JSON normalization
+                elif df is not None and 'json' in raw_question.lower() and ('normalize' in raw_question.lower() or 'snake_case' in raw_question.lower()):
+                    import json
+                    # Normalize column names to snake_case
+                    df.columns = df.columns.str.strip().str.lower().str.replace(r'\s+', '_', regex=True)
                     
-                    if context_for_llm:
-                        df_info['additional_context'] = context_for_llm
+                    # Rename common columns
+                    rename_map = {'id': 'id', 'name': 'name', 'joined': 'joined', 'value': 'value'}
+                    for old_col in df.columns:
+                        for std_name in rename_map:
+                            if std_name in old_col.lower():
+                                df = df.rename(columns={old_col: std_name})
+                                break
                     
-                    try:
-                        logger.info("   🤖 Generating analysis code with LLM...")
-                        analysis_code = await llm_client.generate_analysis_code(df_info, effective_question)
-                        logger.info(f"   Generated code:")
-                        for line in analysis_code.split('\n')[:10]:
-                            logger.info(f"      {line}")
+                    # Convert dates to ISO-8601
+                    for col in df.columns:
+                        if 'date' in col.lower() or col == 'joined':
+                            try:
+                                df[col] = pd.to_datetime(df[col]).dt.strftime('%Y-%m-%d')
+                            except Exception:
+                                pass
+                    
+                    # Convert values to integers where applicable
+                    for col in df.columns:
+                        if col == 'value' or 'value' in col.lower() or col == 'id':
+                            try:
+                                df[col] = df[col].astype(int)
+                            except Exception:
+                                pass
+                    
+                    # Sort by id
+                    if 'id' in df.columns:
+                        df = df.sort_values('id')
+                    
+                    # Convert to JSON array
+                    answer = df.to_json(orient='records')
+                    logger.info(f"   ✓ CSV normalized to JSON: {len(answer)} chars")
+                
+                # 4. Audio transcript - just use it directly
+                elif merged_context.get('audio_transcript') and 'transcri' in raw_question.lower():
+                    answer = merged_context['audio_transcript'].lower().strip()
+                    logger.info(f"   ✓ Direct audio transcript: {answer}")
+                
+                # ===== LLM-BASED ANALYSIS (when direct extraction not possible) =====
+                if answer is None:
+                    # Build context string for LLM
+                    context_for_llm = ""
+                    if merged_context.get('scraped_page'):
+                        context_for_llm += f"\n=== SCRAPED PAGE CONTENT ===\n{merged_context['scraped_page'][:5000]}\n"
+                    if merged_context.get('audio_transcript'):
+                        context_for_llm += f"\n=== AUDIO TRANSCRIPT ===\n{merged_context['audio_transcript']}\n"
+                    if merged_context.get('pdf_text'):
+                        context_for_llm += f"\n=== PDF CONTENT ===\n{merged_context['pdf_text'][:5000]}\n"
+                    if merged_context.get('webpage_text'):
+                        context_for_llm += f"\n=== WEBPAGE CONTENT ===\n{merged_context['webpage_text'][:3000]}\n"
+                    if merged_context.get('text_content'):
+                        context_for_llm += f"\n=== TEXT CONTENT ===\n{merged_context['text_content'][:3000]}\n"
+                    if merged_context.get('cutoff'):
+                        context_for_llm += f"\n=== CUTOFF VALUE ===\n{merged_context['cutoff']}\n"
+                    
+                    # If we have an audio transcript, it likely contains the instructions
+                    # Append it to the question text so LLM understands the task
+                    effective_question = raw_question
+                    if merged_context.get('audio_transcript'):
+                        effective_question = f"{raw_question}\n\n[AUDIO TRANSCRIPT INSTRUCTIONS]: {merged_context['audio_transcript']}"
+                        logger.info(f"   📝 Audio instructions appended to question")
+                    
+                    # Use LLM to generate and execute analysis code
+                    if df is not None and not df.empty:
+                        df_info = get_dataframe_info(df)
+                        logger.info(f"   DataFrame info: {df_info.get('shape')}, columns: {df_info.get('columns', [])[:5]}")
                         
-                        answer, output, error = await execute_analysis_code(analysis_code, df)
+                        if context_for_llm:
+                            df_info['additional_context'] = context_for_llm
                         
-                        if error:
-                            logger.warning(f"   ⚠️ Code execution error: {error}")
-                            logger.info("   Falling back to simple analysis...")
-                            answer = simple_analysis(df, effective_question)
-                        else:
+                        try:
+                            logger.info("   🤖 Generating analysis code with LLM...")
+                            analysis_code = await llm_client.generate_analysis_code(df_info, effective_question)
+                            logger.info(f"   Generated code:")
+                            for line in analysis_code.split('\n')[:10]:
+                                logger.info(f"      {line}")
+                            
+                            answer, output, error = await execute_analysis_code(analysis_code, df)
+                            
+                            if error:
+                                logger.warning(f"   ⚠️ Code execution error: {error}")
+                                logger.info("   Falling back to simple analysis...")
+                                answer = simple_analysis(df, effective_question)
+                            else:
                             logger.info(f"   ✓ Code execution successful")
                     except Exception as e:
                         logger.warning(f"   ⚠️ LLM analysis exception: {e}")

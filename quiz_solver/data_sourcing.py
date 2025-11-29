@@ -206,6 +206,44 @@ async def call_api(url: str) -> Any:
                 raise Exception(f"API call failed with status {resp.status}")
 
 
+async def call_github_api(owner: str, repo: str, sha: str, path_prefix: str, extension: str) -> int:
+    """
+    Call GitHub API to count files with given extension under path prefix.
+    Uses: GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1
+    """
+    url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{sha}?recursive=1"
+    
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": get_random_user_agent(),
+    }
+    
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url, headers=headers, ssl=False) as resp:
+            if resp.status != 200:
+                logger.error(f"GitHub API failed: {resp.status}")
+                return 0
+            
+            data = await resp.json()
+            tree = data.get("tree", [])
+            
+            # Count files matching criteria
+            count = 0
+            for item in tree:
+                path = item.get("path", "")
+                item_type = item.get("type", "")
+                
+                # Check if file is under path prefix and has correct extension
+                if item_type == "blob":  # It's a file, not a directory
+                    if path.startswith(path_prefix) and path.endswith(extension):
+                        count += 1
+                        logger.debug(f"Matched: {path}")
+            
+            logger.info(f"GitHub API: Found {count} {extension} files under {path_prefix}")
+            return count
+
+
 async def scrape_webpage(url: str) -> str:
     """Scrape webpage content."""
     
@@ -472,16 +510,61 @@ def is_image_url(url: str) -> bool:
     return any(url.lower().endswith(ext) for ext in image_extensions)
 
 
-async def analyze_image(url: str) -> str:
+def get_dominant_color(image_bytes: bytes) -> str:
     """
-    Analyze image file using Gemini Vision.
+    Get the most frequent RGB color from image using PIL.
+    Returns hex string like #rrggbb.
+    """
+    try:
+        from PIL import Image
+        from collections import Counter
+        
+        img = Image.open(io.BytesIO(image_bytes))
+        # Convert to RGB if needed
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Get all pixels
+        pixels = list(img.getdata())
+        
+        # Count occurrences of each color
+        color_counts = Counter(pixels)
+        
+        # Get most common color
+        most_common_color = color_counts.most_common(1)[0][0]
+        
+        # Convert to hex
+        r, g, b = most_common_color
+        hex_color = f"#{r:02x}{g:02x}{b:02x}"
+        
+        logger.info(f"Dominant color: {hex_color} (from {len(color_counts)} unique colors)")
+        return hex_color
+    
+    except Exception as e:
+        logger.error(f"Failed to get dominant color: {e}")
+        return ""
+
+
+async def analyze_image(url: str) -> dict[str, Any]:
+    """
+    Analyze image file using Gemini Vision AND extract dominant color.
     Supports: .png, .jpg, .jpeg, .gif, .webp, .bmp
+    Returns dict with description and dominant_color.
     """
     import httpx
     
     # Download image file
     image_bytes = await download_file(url)
     logger.info(f"Downloaded image file: {len(image_bytes)} bytes")
+    
+    result: dict[str, Any] = {
+        "description": "",
+        "dominant_color": "",
+        "type": "image"
+    }
+    
+    # Get dominant color using PIL (fast, reliable)
+    result["dominant_color"] = get_dominant_color(image_bytes)
     
     # Determine mime type from extension
     ext = url.split('.')[-1].lower()
@@ -521,14 +604,13 @@ async def analyze_image(url: str) -> str:
                 )
                 response.raise_for_status()
                 data = response.json()
-                description = data["candidates"][0]["content"]["parts"][0]["text"]
-                logger.info(f"Image analyzed via aipipe Gemini: {len(description)} chars")
-                return description
+                result["description"] = data["candidates"][0]["content"]["parts"][0]["text"]
+                logger.info(f"Image analyzed via aipipe Gemini: {len(result['description'])} chars")
         except Exception as e:
             logger.warning(f"Aipipe Gemini image analysis failed: {e}")
     
     # Fallback: try direct Gemini API
-    if settings.llm.gemini_api_key:
+    if not result["description"] and settings.llm.gemini_api_key:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
@@ -549,14 +631,12 @@ async def analyze_image(url: str) -> str:
                 )
                 response.raise_for_status()
                 data = response.json()
-                description = data["candidates"][0]["content"]["parts"][0]["text"]
-                logger.info(f"Image analyzed via direct Gemini: {len(description)} chars")
-                return description
+                result["description"] = data["candidates"][0]["content"]["parts"][0]["text"]
+                logger.info(f"Image analyzed via direct Gemini: {len(result['description'])} chars")
         except Exception as e:
             logger.warning(f"Direct Gemini image analysis failed: {e}")
     
-    logger.error("All image analysis methods failed")
-    return ""
+    return result
 
 
 async def fetch_all_data_sources(data_sources: list[str], session: Any) -> dict[str, Any]:
@@ -575,9 +655,9 @@ async def fetch_all_data_sources(data_sources: list[str], session: Any) -> dict[
                 transcript = await transcribe_audio(source_url)
                 fetched_data[source_url] = {"transcript": transcript, "type": "audio"}
             elif is_image_url(source_url):
-                # Handle image files with Gemini Vision
-                description = await analyze_image(source_url)
-                fetched_data[source_url] = {"description": description, "type": "image"}
+                # Handle image files with Gemini Vision + PIL color analysis
+                image_result = await analyze_image(source_url)
+                fetched_data[source_url] = image_result
             elif '/api/' in source_url or source_url.endswith('/data'):
                 fetched_data[source_url] = await call_api(source_url)
             else:
