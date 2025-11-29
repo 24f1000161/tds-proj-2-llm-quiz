@@ -1,3 +1,13 @@
+---
+title: LLM Quiz Solver
+emoji: "🤖"
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # LLM Quiz Solver
 
 An automated quiz solving agent powered by LLM with 3-minute deadline support.
