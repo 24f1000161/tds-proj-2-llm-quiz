@@ -220,14 +220,14 @@ class LLMClient:
         """Generate using Gemini via aipipe's native Gemini endpoint.
         
         Uses: https://aipipe.org/geminiv1beta/models/MODEL:generateContent
-        With: x-goog-api-key header (NOT Authorization Bearer)
+        With: Authorization: Bearer header (same as OpenRouter)
         """
         
         if not self._http_client:
             raise RuntimeError("HTTP client not initialized")
         
         # Use aipipe's native Gemini endpoint
-        # Model format: gemini-2.0-flash-lite, gemini-2.5-flash, etc.
+        # Model format: gemini-2.0-flash, gemini-1.5-flash, etc.
         model = settings.llm.gemini_model
         # Remove any prefix if present
         if model.startswith("google/"):
@@ -250,9 +250,9 @@ class LLMClient:
             }
         }
         
-        # Use x-goog-api-key header for Gemini via aipipe
+        # Use Authorization Bearer header for aipipe (same as OpenRouter)
         headers = {
-            "x-goog-api-key": settings.llm.aipipe_token,
+            "Authorization": f"Bearer {settings.llm.aipipe_token}",
             "Content-Type": "application/json"
         }
         
