@@ -118,7 +118,7 @@ async def wait_for_spa_rendering(page: Page, session: Any) -> None:
     # Strategy 1: Check for framework-specific DOM elements
     for framework, config in FRAMEWORK_CHECKS.items():
         try:
-            await page.wait_for_selector(config["wait_selector"], timeout=2000)
+            await page.wait_for_selector(config["wait_selector"], timeout=1000)
             detected_framework = framework
             logger.info(f"Detected {framework} framework")
             break
@@ -144,14 +144,14 @@ async def wait_for_spa_rendering(page: Page, session: Any) -> None:
                 const element = document.querySelector("#result");
                 return element && element.textContent.trim().length > 0;
             }""",
-            timeout=10000
+            timeout=5000
         )
         logger.info("Content detected in #result div")
     except Exception:
         logger.warning("Timeout waiting for #result content, continuing anyway")
     
-    # Wait for network to settle
-    await page.wait_for_load_state("networkidle")
+    # Skip waiting for networkidle - it's too slow
+    # await page.wait_for_load_state("networkidle")
     
     log_step(session, "spa_rendered", {
         "framework": detected_framework or "unknown"
@@ -273,36 +273,24 @@ def decode_content_multi_layer(content: str) -> tuple[str, int]:
 
 
 async def handle_spa_edge_cases(page: Page, session: Any) -> None:
-    """Handle common SPA edge cases."""
+    \"\"\"Handle common SPA edge cases - fast version.\"\"\"
     
-    # Edge Case 1: Loading spinners/overlays
+    # Edge Case 1: Loading spinners/overlays - quick check only
     try:
-        spinners = await page.locator(".loading, .spinner, [data-loading='true']").all()
-        for spinner in spinners:
+        spinners = await page.locator(\".loading, .spinner, [data-loading='true']\").all()
+        for spinner in spinners[:2]:  # Only check first 2
             try:
-                await spinner.wait_for(state="hidden", timeout=10000)
+                await spinner.wait_for(state=\"hidden\", timeout=2000)
             except Exception:
                 pass
     except Exception:
         pass
     
-    # Edge Case 2: Modal dialogs
+    # Scroll to top
     try:
-        modals = await page.locator(".modal, [role='dialog']").all()
-        if modals:
-            logger.info(f"Found {len(modals)} modal(s)")
-            for modal in modals:
-                try:
-                    content = await modal.inner_text()
-                    if content.strip():
-                        logger.info(f"Modal content: {content[:100]}")
-                except Exception:
-                    pass
+        await page.evaluate(\"window.scrollTo(0, 0)\")
     except Exception:
         pass
-    
-    # Scroll to top
-    await page.evaluate("window.scrollTo(0, 0)")
 
 
 async def handle_pagination(page: Page, session: Any, max_pages: int = 10) -> list[str]:

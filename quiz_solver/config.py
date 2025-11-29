@@ -34,10 +34,10 @@ class TimeoutConfig(BaseModel):
     
     quiz_deadline_seconds: int = 180  # 3 minutes as required
     safety_buffer_seconds: int = 10  # Reserve for final submission
-    llm_timeout_primary: int = 30
-    llm_timeout_fallback: int = 30
-    navigation_timeout: int = 30000  # 30 seconds in ms
-    download_timeout: int = 30
+    llm_timeout_primary: int = 15  # Reduced from 30
+    llm_timeout_fallback: int = 15  # Reduced from 30
+    navigation_timeout: int = 15000  # 15 seconds in ms (reduced from 30)
+    download_timeout: int = 15  # Reduced from 30
 
 
 class BrowserConfig(BaseModel):
