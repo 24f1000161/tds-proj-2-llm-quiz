@@ -474,16 +474,28 @@ async def solve_quiz_pipeline(
                         logger.info(f"   ✓ LLM direct answer: {str(answer)[:100]}...")
                     except Exception as e:
                         logger.warning(f"   ⚠️ LLM direct answer failed: {e}")
+                
+                # UNIVERSAL FALLBACK: Apply for any empty answer (regardless of which branch we came from)
+                if not answer or (isinstance(answer, str) and not answer.strip()):
+                    logger.warning("   ⚠️ Answer is empty, checking fallbacks...")
                     
-                    # Fallback: if no answer yet, use a default for intro pages
-                    if not answer or (isinstance(answer, str) and not answer.strip()):
-                        # Check if this looks like an intro/instruction page
-                        if "how to play" in raw_question.lower() or "start by posting" in raw_question.lower():
+                    # Check if this looks like an intro/instruction page
+                    if "how to play" in raw_question.lower() or "start by posting" in raw_question.lower():
+                        answer = "start"
+                        logger.info(f"   ✓ Using 'start' for intro page")
+                    elif "anything" in raw_question.lower():
+                        answer = "automated_solver_response"
+                        logger.info(f"   ✓ Using fallback answer for 'anything' question")
+                    else:
+                        # Try to extract from context as last resort
+                        extracted = extract_answer_from_context(merged_context, effective_question)
+                        if extracted:
+                            answer = extracted
+                            logger.info(f"   ✓ Extracted answer from context: {str(answer)[:100]}...")
+                        else:
+                            # Absolute last resort - submit something
                             answer = "start"
-                            logger.info(f"   ✓ Using 'start' for intro page")
-                        elif "anything" in raw_question.lower():
-                            answer = "automated_solver_response"
-                            logger.info(f"   ✓ Using fallback answer for 'anything' question")
+                            logger.info(f"   ✓ Using 'start' as absolute fallback")
                 
                 # ==================== STAGE 8: FORMAT ANSWER ====================
                 logger.info("")

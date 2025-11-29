@@ -189,9 +189,13 @@ class LLMClient:
             self.token_tracker.aipipe_used += data["usage"].get("total_tokens", 0)
         
         content = data["choices"][0]["message"]["content"]
+        
+        if not content or not content.strip():
+            raise ValueError("Aipipe returned empty response")
+        
         logger.debug(f"Aipipe response: {content[:100]}...")
         
-        return content or ""
+        return content
     
     async def _generate_gemini(
         self,
@@ -283,8 +287,8 @@ class LLMClient:
                 raise ValueError("No parts in response content")
             
             content = parts[0].get("text", "")
-            if not content:
-                raise ValueError("Empty text in response")
+            if not content or not content.strip():
+                raise ValueError("Gemini returned empty text in response")
             
             logger.debug(f"Gemini (via aipipe) response: {content[:100]}...")
             return content
@@ -331,9 +335,13 @@ class LLMClient:
             self.token_tracker.gemini_used += data["usageMetadata"].get("totalTokenCount", 0)
         
         content = data["candidates"][0]["content"]["parts"][0]["text"]
+        
+        if not content or not content.strip():
+            raise ValueError("Gemini direct returned empty response")
+        
         logger.debug(f"Gemini (direct) response: {content[:100]}...")
         
-        return content or ""
+        return content
     
     async def parse_question(self, question_text: str) -> dict[str, Any]:
         """Parse a question using LLM."""
