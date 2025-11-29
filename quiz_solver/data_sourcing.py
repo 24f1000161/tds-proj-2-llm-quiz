@@ -114,7 +114,7 @@ async def download_and_parse_pdf(url: str) -> dict[str, Any]:
 
 
 async def download_and_parse_file(url: str) -> Any:
-    """Download and parse CSV, JSON, or Excel files."""
+    """Download and parse CSV, JSON, XML, TXT, or Excel files."""
     
     file_bytes = await download_file(url)
     
@@ -142,14 +142,52 @@ async def download_and_parse_file(url: str) -> Any:
             return df
         return data
     
+    elif url.endswith('.xml'):
+        # Parse XML to DataFrame or dict
+        try:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(file_bytes.decode('utf-8'))
+            
+            # Try to extract tabular data from XML
+            records = []
+            for child in root:
+                record = {}
+                for elem in child:
+                    record[elem.tag] = elem.text
+                if record:
+                    records.append(record)
+            
+            if records:
+                df = pd.DataFrame(records)
+                logger.info(f"Parsed XML to DataFrame: {df.shape}")
+                return df
+            else:
+                # Return as text for LLM analysis
+                logger.info(f"Parsed XML as text: {len(file_bytes)} bytes")
+                return {"xml_text": file_bytes.decode('utf-8'), "type": "xml"}
+        except Exception as e:
+            logger.warning(f"XML parsing failed: {e}")
+            return {"xml_text": file_bytes.decode('utf-8'), "type": "xml"}
+    
+    elif url.endswith('.txt'):
+        # Return text content
+        text_content = file_bytes.decode('utf-8')
+        logger.info(f"Parsed TXT file: {len(text_content)} chars")
+        return {"text": text_content, "type": "txt"}
+    
     elif url.endswith(('.xlsx', '.xls')):
         df = pd.read_excel(io.BytesIO(file_bytes))
         logger.info(f"Parsed Excel: {df.shape}")
         return df
     
     else:
-        # Return raw bytes
-        return file_bytes
+        # Return raw bytes or try to decode as text
+        try:
+            text = file_bytes.decode('utf-8')
+            logger.info(f"Parsed unknown file as text: {len(text)} chars")
+            return {"text": text, "type": "unknown"}
+        except Exception:
+            return file_bytes
 
 
 async def call_api(url: str) -> Any:
@@ -428,6 +466,99 @@ def is_audio_url(url: str) -> bool:
     return any(url.lower().endswith(ext) for ext in audio_extensions)
 
 
+def is_image_url(url: str) -> bool:
+    """Check if URL is an image file."""
+    image_extensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff']
+    return any(url.lower().endswith(ext) for ext in image_extensions)
+
+
+async def analyze_image(url: str) -> str:
+    """
+    Analyze image file using Gemini Vision.
+    Supports: .png, .jpg, .jpeg, .gif, .webp, .bmp
+    """
+    import httpx
+    
+    # Download image file
+    image_bytes = await download_file(url)
+    logger.info(f"Downloaded image file: {len(image_bytes)} bytes")
+    
+    # Determine mime type from extension
+    ext = url.split('.')[-1].lower()
+    mime_types = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'bmp': 'image/bmp',
+        'tiff': 'image/tiff',
+    }
+    mime_type = mime_types.get(ext, 'image/png')
+    
+    # Encode as base64
+    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+    
+    # Use Gemini via aipipe for image analysis
+    if settings.llm.aipipe_token:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    "https://aipipe.org/geminiv1beta/models/gemini-2.0-flash:generateContent",
+                    headers={
+                        "Authorization": f"Bearer {settings.llm.aipipe_token}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "contents": [{
+                            "parts": [
+                                {"text": "Describe this image in detail. Extract any text, numbers, data, charts, or tables visible. If there's a chart or graph, describe the data it represents."},
+                                {"inline_data": {"mime_type": mime_type, "data": image_b64}}
+                            ]
+                        }],
+                        "generationConfig": {"maxOutputTokens": 4000}
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                description = data["candidates"][0]["content"]["parts"][0]["text"]
+                logger.info(f"Image analyzed via aipipe Gemini: {len(description)} chars")
+                return description
+        except Exception as e:
+            logger.warning(f"Aipipe Gemini image analysis failed: {e}")
+    
+    # Fallback: try direct Gemini API
+    if settings.llm.gemini_api_key:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                    headers={
+                        "x-goog-api-key": settings.llm.gemini_api_key,
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "contents": [{
+                            "parts": [
+                                {"text": "Describe this image in detail. Extract any text, numbers, data, charts, or tables visible. If there's a chart or graph, describe the data it represents."},
+                                {"inline_data": {"mime_type": mime_type, "data": image_b64}}
+                            ]
+                        }],
+                        "generationConfig": {"maxOutputTokens": 4000}
+                    }
+                )
+                response.raise_for_status()
+                data = response.json()
+                description = data["candidates"][0]["content"]["parts"][0]["text"]
+                logger.info(f"Image analyzed via direct Gemini: {len(description)} chars")
+                return description
+        except Exception as e:
+            logger.warning(f"Direct Gemini image analysis failed: {e}")
+    
+    logger.error("All image analysis methods failed")
+    return ""
+
+
 async def fetch_all_data_sources(data_sources: list[str], session: Any) -> dict[str, Any]:
     """Fetch data from all identified sources."""
     
@@ -437,12 +568,16 @@ async def fetch_all_data_sources(data_sources: list[str], session: Any) -> dict[
         try:
             if source_url.endswith('.pdf'):
                 fetched_data[source_url] = await download_and_parse_pdf(source_url)
-            elif source_url.endswith(('.csv', '.json', '.xlsx', '.xls')):
+            elif source_url.endswith(('.csv', '.json', '.xlsx', '.xls', '.xml', '.txt')):
                 fetched_data[source_url] = await download_and_parse_file(source_url)
             elif is_audio_url(source_url):
                 # Handle audio files with transcription
                 transcript = await transcribe_audio(source_url)
                 fetched_data[source_url] = {"transcript": transcript, "type": "audio"}
+            elif is_image_url(source_url):
+                # Handle image files with Gemini Vision
+                description = await analyze_image(source_url)
+                fetched_data[source_url] = {"description": description, "type": "image"}
             elif '/api/' in source_url or source_url.endswith('/data'):
                 fetched_data[source_url] = await call_api(source_url)
             else:
