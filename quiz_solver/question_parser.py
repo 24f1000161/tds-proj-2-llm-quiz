@@ -20,8 +20,19 @@ def extract_question_components(question_text: str, session: Any) -> QuestionCom
         components.question_id = f"Q{qid_match.group(1)}"
     
     # Extract absolute URLs (files and endpoints)
-    url_pattern = r"https?://[^\s<>\"'\)\]]+(?:\.\w+)?"
+    # Don't capture trailing punctuation like . or ,
+    url_pattern = r'https?://[^\s<>"\')\]]+'
     all_urls = re.findall(url_pattern, question_text)
+    
+    # Clean up URLs - remove trailing punctuation
+    cleaned_urls = []
+    for url in all_urls:
+        # Remove trailing punctuation that's not part of URL
+        while url and url[-1] in '.,:;!?)\"\'':
+            url = url[:-1]
+        if url:
+            cleaned_urls.append(url)
+    all_urls = cleaned_urls
     
     # Also extract relative URLs (like /path/to/page)
     # Look for patterns like "Scrape /path" or "href="/path""

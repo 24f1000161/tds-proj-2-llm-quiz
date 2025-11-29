@@ -474,8 +474,14 @@ async def solve_quiz_pipeline(
                         logger.info(f"   ✓ LLM direct answer: {str(answer)[:100]}...")
                     except Exception as e:
                         logger.warning(f"   ⚠️ LLM direct answer failed: {e}")
-                        # Fallback: if question says "anything", use a default
-                        if "anything" in raw_question.lower():
+                    
+                    # Fallback: if no answer yet, use a default for intro pages
+                    if not answer or (isinstance(answer, str) and not answer.strip()):
+                        # Check if this looks like an intro/instruction page
+                        if "how to play" in raw_question.lower() or "start by posting" in raw_question.lower():
+                            answer = "start"
+                            logger.info(f"   ✓ Using 'start' for intro page")
+                        elif "anything" in raw_question.lower():
                             answer = "automated_solver_response"
                             logger.info(f"   ✓ Using fallback answer for 'anything' question")
                 

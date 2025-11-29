@@ -159,7 +159,10 @@ async def wait_for_spa_rendering(page: Page, session: Any) -> None:
 
 
 async def extract_and_decode_content(page: Page, session: Any) -> dict[str, Any]:
-    """Extract all content from page and handle base64 decoding."""
+    """Extract all content from page and handle base64 decoding - fast version."""
+    
+    # Set a short timeout for all operations
+    page.set_default_timeout(5000)  # 5 seconds max
     
     # Get full page HTML
     html_content = await page.content()
@@ -170,7 +173,9 @@ async def extract_and_decode_content(page: Page, session: Any) -> dict[str, Any]
     # Get the #result div specifically
     result_content = None
     try:
-        result_content = await page.locator("#result").inner_html()
+        result_el = page.locator("#result")
+        if await result_el.count() > 0:
+            result_content = await result_el.first.inner_html(timeout=2000)
     except Exception:
         pass
     
@@ -197,12 +202,14 @@ async def extract_and_decode_content(page: Page, session: Any) -> dict[str, Any]
     except Exception:
         pass
     
-    # Extract specific values like cutoff from spans
+    # Extract specific values like cutoff from spans - with short timeout
     special_values = {}
     try:
-        cutoff_el = await page.locator("#cutoff").first.inner_text()
-        if cutoff_el:
-            special_values['cutoff'] = cutoff_el
+        cutoff_el = page.locator("#cutoff")
+        if await cutoff_el.count() > 0:
+            cutoff_text = await cutoff_el.first.inner_text(timeout=2000)
+            if cutoff_text:
+                special_values['cutoff'] = cutoff_text
     except Exception:
         pass
     
