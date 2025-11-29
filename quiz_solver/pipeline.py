@@ -275,15 +275,23 @@ async def solve_quiz_pipeline(
                 fetched_data: dict[str, Any] = {}
                 merged_context: dict[str, Any] = {}
                 
-                # First, process any file links from the page (CSV, JSON, etc.)
+                # First, process any file links from the page (CSV, JSON, images, audio, etc.)
                 from urllib.parse import urljoin
+                
+                # Extended list of processable file extensions
+                PROCESSABLE_EXTENSIONS = [
+                    '.csv', '.json', '.xlsx', '.txt', '.pdf',  # Data files
+                    '.png', '.jpg', '.jpeg', '.gif', '.webp',  # Images
+                    '.opus', '.mp3', '.wav', '.ogg', '.m4a',   # Audio
+                    '.mp4', '.webm',                            # Video
+                ]
                 
                 if extracted.get("links"):
                     for link in extracted["links"]:
                         href = link.get("href", "")
-                        if href and any(ext in href.lower() for ext in ['.csv', '.json', '.xlsx', '.txt', '.pdf']):
+                        if href and any(ext in href.lower() for ext in PROCESSABLE_EXTENSIONS):
                             abs_url = urljoin(current_url, href)
-                            logger.info(f"   📁 Found data file: {href} → {abs_url}")
+                            logger.info(f"   📁 Found file link: {href} → {abs_url}")
                             if abs_url not in question_components.data_sources:
                                 question_components.data_sources.append(abs_url)
                 
