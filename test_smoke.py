@@ -7,9 +7,11 @@ Run: uv run python test_smoke.py
 import asyncio
 import time
 import httpx
+import pytest
 
 BASE_URL = "http://127.0.0.1:8000"
 
+@pytest.mark.asyncio
 async def test_smoke():
     print("=" * 60)
     print("SMOKE TEST: Quiz Solver API")

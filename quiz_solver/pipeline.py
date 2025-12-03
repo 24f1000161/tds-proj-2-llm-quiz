@@ -64,9 +64,11 @@ def should_force_submit(session: SessionState) -> bool:
 # extract_answer_from_context removed - using LLM-driven approach instead
 
 
-async def scrape_url_with_browser(page, url: str, session: SessionState) -> str:
-    """Scrape a URL using the browser and return the rendered text content."""
+async def scrape_url_with_browser(page, url: str, session: SessionState) -> dict:
+    """Scrape a URL using the browser and return both text and HTML content."""
     logger.info(f"🌐 BROWSER SCRAPE: Navigating to {url}")
+    
+    result = {"text": "", "html": ""}
     
     try:
         # Navigate to the URL
@@ -76,6 +78,9 @@ async def scrape_url_with_browser(page, url: str, session: SessionState) -> str:
         # Wait for JavaScript to render (reduced wait)
         await page.wait_for_load_state("networkidle")
         await asyncio.sleep(0.5)  # Short wait for dynamic content
+        
+        # Get full HTML for CSS selector scraping
+        result["html"] = await page.content()
         
         # Try to get content from common containers
         content = ""
@@ -98,8 +103,9 @@ async def scrape_url_with_browser(page, url: str, session: SessionState) -> str:
             content = await page.evaluate("document.body.innerText")
             logger.info(f"📝 Full page content: {len(content)} chars")
         
+        result["text"] = content
         logger.info(f"📝 Scraped content preview: {content[:200]}...")
-        return content
+        return result
         
     except Exception as e:
         logger.error(f"❌ Browser scrape failed: {e}")
@@ -283,10 +289,11 @@ async def solve_quiz_pipeline(
                     for rel_url in question_components.relative_urls:
                         abs_url = urljoin(current_url, rel_url)
                         logger.info(f"   🌐 Scraping relative URL: {rel_url} → {abs_url}")
-                        scraped_content = await scrape_url_with_browser(page, abs_url, session)
-                        if scraped_content:
-                            merged_context['scraped_page'] = scraped_content
-                            logger.info(f"   ✓ Scraped {len(scraped_content)} chars")
+                        scraped_result = await scrape_url_with_browser(page, abs_url, session)
+                        if scraped_result and scraped_result.get('text'):
+                            merged_context['scraped_page'] = scraped_result['text']
+                            merged_context['html_content'] = scraped_result.get('html', '')
+                            logger.info(f"   ✓ Scraped {len(scraped_result['text'])} chars")
                 
                 # Check if we need to scrape additional URLs with the browser (from LLM)
                 scrape_action = classification.get('scrape_action')
@@ -298,10 +305,11 @@ async def solve_quiz_pipeline(
                             scrape_url = urljoin(current_url, scrape_url)
                         
                         logger.info(f"   🌐 LLM requested browser scrape: {scrape_url}")
-                        scraped_content = await scrape_url_with_browser(page, scrape_url, session)
-                        if scraped_content:
-                            merged_context['scraped_page'] = scraped_content
-                            logger.info(f"   ✓ Browser scraped {len(scraped_content)} chars")
+                        scraped_result = await scrape_url_with_browser(page, scrape_url, session)
+                        if scraped_result and scraped_result.get('text'):
+                            merged_context['scraped_page'] = scraped_result['text']
+                            merged_context['html_content'] = scraped_result.get('html', '')
+                            logger.info(f"   ✓ Browser scraped {len(scraped_result['text'])} chars")
                 
                 if question_components.data_sources:
                     logger.info(f"   Fetching {len(question_components.data_sources)} data source(s)...")
@@ -328,6 +336,9 @@ async def solve_quiz_pipeline(
                             elif 'text' in data:
                                 merged_context['webpage_text'] = data.get('text', '')
                                 merged_context['webpage_tables'] = data.get('tables', [])
+                                # Also capture raw HTML for CSS selector scraping
+                                if data.get('html'):
+                                    merged_context['html_content'] = data.get('html', '')
                                 logger.info(f"     → Webpage: {len(data.get('text', ''))} chars, {len(data.get('tables', []))} tables")
                             elif 'owner' in data and 'repo' in data and 'sha' in data:
                                 # GitHub tree config - store for API call
