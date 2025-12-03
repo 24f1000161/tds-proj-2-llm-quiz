@@ -56,6 +56,39 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/test-llm")
+async def test_llm():
+    """
+    Test LLM connectivity (for debugging).
+    Returns a simple test to verify Gemini API is working.
+    """
+    try:
+        from .llm_client import LLMClient
+        
+        client = LLMClient()
+        await client.initialize()
+        
+        # Simple test
+        response = await client.generate(
+            "What is 2+2? Just reply with the number only.",
+            max_tokens=50
+        )
+        
+        return {
+            "status": "ok",
+            "model": client.primary_model,
+            "response": response,
+            "message": "LLM is working correctly"
+        }
+    except Exception as e:
+        logger.error(f"LLM test failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "LLM test failed"
+        }
+
+
 @app.get("/logs")
 async def get_logs(
     lines: int = Query(default=100, ge=1, le=5000, description="Number of lines to return"),
