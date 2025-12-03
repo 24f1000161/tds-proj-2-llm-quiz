@@ -23,6 +23,8 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "uvicorn[standard]>=0.38.0",
     "pillow>=10.0.0",
+    "pyngrok>=7.5.0",
+    "gtts>=2.5.4",
 ]
 
 [project.scripts]

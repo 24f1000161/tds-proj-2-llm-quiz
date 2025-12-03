@@ -6,6 +6,7 @@ import time
 import asyncio
 import hashlib
 from typing import Any, Optional
+from urllib.parse import urljoin
 import pandas as pd
 
 from .config import settings
@@ -474,8 +475,12 @@ async def solve_quiz_pipeline(
                 if submission_result.correct:
                     logger.info("✅ CORRECT!")
                     if submission_result.url:
-                        logger.info(f"   → Next quiz: {submission_result.url}")
-                        current_url = submission_result.url
+                        # Resolve relative URLs to absolute
+                        next_url = submission_result.url
+                        if not next_url.startswith('http'):
+                            next_url = urljoin(current_url, next_url)
+                        logger.info(f"   → Next quiz: {next_url}")
+                        current_url = next_url
                         session.quiz_chain.append(current_url)
                         session.current_url = current_url
                     else:
@@ -485,8 +490,12 @@ async def solve_quiz_pipeline(
                     logger.warning(f"❌ INCORRECT: {submission_result.reason}")
                     
                     if submission_result.url:
-                        logger.info(f"   → Moving to: {submission_result.url}")
-                        current_url = submission_result.url
+                        # Resolve relative URLs to absolute
+                        next_url = submission_result.url
+                        if not next_url.startswith('http'):
+                            next_url = urljoin(current_url, next_url)
+                        logger.info(f"   → Moving to: {next_url}")
+                        current_url = next_url
                         session.quiz_chain.append(current_url)
                     else:
                         logger.info("   No more quizzes to attempt")

@@ -212,22 +212,26 @@ async def llm_driven_data_analysis(
 
 QUESTION: {question}
 
-DATAFRAME INFO:
+CRITICAL RULES:
+1. Variable 'df' already contains the loaded DataFrame - USE IT DIRECTLY
+2. DO NOT create dummy data or sample data
+3. DO NOT use pd.read_csv(), pd.read_json(), or any file loading
+4. DO NOT redefine 'df' - it already has the real data
+
+ACTUAL DATA IN 'df':
 - Shape: {df_info.get('shape')}
 - Columns: {df_info.get('columns')}
-- Sample data:
+- First 5 rows:
 {df_info.get('sample', '')}
 
 SOLUTION GUIDANCE: {guidance}
-TRANSFORMATIONS NEEDED: {transformations}
 
 {"PERSONALIZATION: Email length is " + str(len(session.email)) + ", use for offset calculation: " + personalization.get('offset_calculation', '') if personalization.get('uses_email') else ""}
 
-Generate ONLY Python code (no explanations):
-- Use variable 'df' for the dataframe
-- Store final answer in variable 'answer'
-- Handle edge cases (NaN, type conversion)
-- Apply any required formatting (decimals, JSON, etc.)
+Generate ONLY the analysis code:
+- Work with existing 'df' variable (contains real data above)
+- Store final answer in 'answer' variable
+- No imports needed (pandas and numpy available as pd/np)
 
 Code:"""
 
@@ -243,6 +247,29 @@ Code:"""
         # Remove any markdown
         code = re.sub(r'^```\w*\n?', '', code)
         code = re.sub(r'\n?```$', '', code)
+        
+        # IMPORTANT: Strip any lines that try to redefine 'df' or load data
+        cleaned_lines = []
+        skip_block = False
+        for line in code.split('\n'):
+            line_lower = line.lower().strip()
+            # Skip lines that redefine df or load files
+            if any(pattern in line_lower for pattern in [
+                'pd.read_csv', 'pd.read_json', 'pd.read_excel', 
+                'pd.dataframe(', "df = pd.", "df=pd.",
+                "# for demonstration", "# assuming", "# let's create",
+                "# create a dummy", "# sample data"
+            ]):
+                skip_block = True
+                continue
+            # Skip multi-line dictionary definitions for dummy data
+            if skip_block:
+                if line.strip().startswith('}') or line.strip() == '':
+                    skip_block = False
+                continue
+            cleaned_lines.append(line)
+        
+        code = '\n'.join(cleaned_lines)
         
         logger.info(f"   🤖 Generated code:")
         for line in code.split('\n')[:8]:
@@ -595,6 +622,19 @@ async def format_answer_dynamically(
     # Simple cases - don't need LLM
     if answer is None:
         return analysis.get('fallback_answer', 'start')
+    
+    # String type - just return the string value directly
+    if expected_format == 'string':
+        answer_str = str(answer).strip()
+        # Remove any markdown or code blocks
+        if answer_str.startswith('```'):
+            lines = answer_str.split('\n')
+            answer_str = '\n'.join(lines[1:-1] if lines[-1].strip().startswith('```') else lines[1:])
+        # Remove surrounding quotes
+        if (answer_str.startswith('"') and answer_str.endswith('"')) or \
+           (answer_str.startswith("'") and answer_str.endswith("'")):
+            answer_str = answer_str[1:-1]
+        return answer_str.strip()
     
     if expected_format == 'number':
         try:
