@@ -23,8 +23,17 @@ An automated quiz solving agent powered by LLM with 3-minute deadline support.
 
 Set the following secrets in your Hugging Face Space settings:
 
-- `STUDENT_SECRETS` - Email:secret pairs (comma-separated)
-- `AIPIPE_TOKEN` - AI Pipe token for LLM access
+**Required:**
+- `STUDENT_SECRETS` - Email:secret pairs (comma-separated), e.g. `student@example.com:mysecret`
+- `GEMINI_API_KEY` - Google Gemini API key (get from https://aistudio.google.com/app/apikey)
+
+**Optional (for fallback):**
+- `AIPIPE_TOKEN` - AI Pipe token for OpenAI fallback (get from https://aipipe.org)
+- `AIPIPE_MODEL` - Model to use via aipipe (default: `openai/gpt-4o-mini`)
+
+**Model Configuration:**
+- `GEMINI_MODEL` - Gemini model to use (default: `gemini-2.0-flash`)
+- `GEMINI_VIA_AIPIPE` - Set to `false` to use direct Gemini API (recommended)
 
 ## Usage
 

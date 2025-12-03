@@ -348,14 +348,33 @@ class LLMClient:
         if "usageMetadata" in data:
             self.token_tracker.gemini_used += data["usageMetadata"].get("totalTokenCount", 0)
         
-        content = data["candidates"][0]["content"]["parts"][0]["text"]
-        
-        if not content or not content.strip():
-            raise ValueError("Gemini direct returned empty response")
-        
-        logger.debug(f"Gemini (direct) response: {content[:100]}...")
-        
-        return content
+        # Parse response with robust error handling
+        try:
+            candidates = data.get("candidates", [])
+            if not candidates:
+                error_msg = data.get("error", {}).get("message", "No candidates in response")
+                logger.error(f"Gemini direct API error: {error_msg}, full response: {data}")
+                raise ValueError(f"Gemini API error: {error_msg}")
+            
+            content_obj = candidates[0].get("content", {})
+            parts = content_obj.get("parts", [])
+            if not parts:
+                finish_reason = candidates[0].get("finishReason", "")
+                if finish_reason == "SAFETY":
+                    raise ValueError("Response blocked by safety filters")
+                logger.error(f"Gemini direct: No parts in response, full data: {data}")
+                raise ValueError("No parts in response content")
+            
+            content = parts[0].get("text", "")
+            if not content or not content.strip():
+                raise ValueError("Gemini direct returned empty text in response")
+            
+            logger.debug(f"Gemini (direct) response: {content[:100]}...")
+            return content
+            
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error(f"Failed to parse Gemini direct response: {e}, data: {data}")
+            raise ValueError(f"Invalid Gemini response structure: {e}")
     
     async def parse_question(self, question_text: str) -> dict[str, Any]:
         """Parse a question using LLM."""
