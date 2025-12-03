@@ -2,49 +2,31 @@
 LLM-driven analysis module.
 
 This module contains all LLM-driven logic for solving quiz questions.
-NO hardcoded patterns - all decisions go through LLM.
+The LLM analyzes each question dynamically - no hardcoded pattern matching.
 
-=== THE SOUL OF TDS QUIZ QUESTIONS ===
+=== APPROACH ===
 
-Based on deep analysis of the TDS course repository, questions follow these patterns:
+1. Question comes in → LLM analyzes it to understand WHAT is being asked
+2. LLM determines → Data to fetch, processing steps, answer format
+3. Execute dynamically → Generate code, run it, return result
 
-1. DATA SOURCING (GA5):
-   - Download files: wget, curl, requests
-   - API calls: GitHub API, REST endpoints
-   - Web scraping: HTML tables, CSS selectors, BeautifulSoup
-   - PDF extraction: pdfplumber, tabula, page-specific data
-   
-2. DATA PREPARATION (GA6):
-   - pandas transformations: filter, groupby, merge, pivot
-   - DuckDB SQL queries: SELECT, WHERE, GROUP BY, HAVING
-   - Regex cleaning: extract patterns, normalize text
-   - Format conversion: CSV to JSON, Excel to DataFrame
+=== GA MODULES COVERED ===
 
-3. DATA ANALYSIS (GA7):
-   - Statistical: sum, count, average, correlation, regression slope
-   - Geospatial: Haversine distance, coordinates, lat/long
-   - Network: NetworkX, shortest path, node degree, centrality
-   - Time series: date filtering, counting specific days (e.g., Thursdays)
+- GA1: Development Tools (uv, git, bash)
+- GA2: Deployment (Docker, Vercel, GitHub Actions)  
+- GA3: AI Coding (code generation, prompts)
+- GA4: LLMs (API calls, embeddings, function calling)
+- GA5: Data Sourcing (wget, curl, APIs, scraping)
+- GA6: Data Preparation (pandas, SQL, DuckDB, cleaning)
+- GA7: Data Analysis (statistics, geospatial, networks)
+- GA8: Data Visualization (charts, base64 PNG)
 
-4. DATA VISUALIZATION (GA8):
-   - Chart generation: matplotlib, seaborn plots
-   - Base64 encoding: PNG < 100KB requirement
-   - Specific chart types: bar, scatter with regression line, histograms
+=== KEY PRINCIPLES ===
 
-5. LLM-SPECIFIC (GA4):
-   - API calls: chat completions, embeddings
-   - Function calling: JSON schema generation
-   - Prompt injection: crafting prompts to extract secrets
-   - Token counting, similarity calculations
-
-6. COMMANDS (GA1-GA3):
-   - uv commands: uv run, uv add
-   - git commands: clone, commit, push
-   - bash/shell: file operations, grep, sort, SHA hash
-
-CRITICAL: Questions are PARAMETERIZED using student email as seed.
-CRITICAL: Answers must be EXACT (numbers, hashes) or within tolerance.
-CRITICAL: 3-minute deadline - speed over perfection.
+1. PARAMETERIZED: Questions use email-based seeds for personalization
+2. EXACT ANSWERS: Numbers must be precise, formats must match
+3. TIME PRESSURE: 3 minutes total - optimize for speed
+4. LLM-FIRST: Let the LLM decide, don't over-engineer patterns
 """
 
 import json
@@ -56,52 +38,20 @@ import pandas as pd
 from .logging_utils import logger
 
 
-# TDS Course Question Patterns - derived from actual GA analysis
-TDS_QUESTION_PATTERNS = {
-    # GA1: Development Tools
-    "uv_command": ["uv run", "uv add", "uv pip", "install uv"],
-    "git_command": ["git clone", "git commit", "git push", "git pull", "git branch"],
-    "bash_file": ["count files", "find files", "sort files", "recent files", "log files"],
-    "hash_sha": ["SHA", "hash", "checksum", "sha256", "md5"],
-    
-    # GA5: Data Sourcing
-    "api_call": ["API", "endpoint", "fetch", "request", "GET", "POST"],
-    "github_api": ["GitHub", "repository", "files", "tree", "contents"],
-    "web_scrape": ["scrape", "CSS selector", "BeautifulSoup", "HTML table"],
-    "pdf_extract": ["PDF", "page", "table", "extract"],
-    
-    # GA6: Data Preparation  
-    "pandas_filter": ["filter", "where", "condition", "rows where"],
-    "pandas_group": ["group by", "aggregate", "sum by", "count by"],
-    "pandas_merge": ["merge", "join", "combine", "common rows"],
-    "sql_query": ["SQL", "SELECT", "FROM", "WHERE", "DuckDB"],
-    "regex_extract": ["regex", "pattern", "extract", "match"],
-    
-    # GA7: Data Analysis
-    "sum_total": ["sum", "total", "add up", "calculate total"],
-    "count_items": ["count", "how many", "number of"],
-    "correlation": ["correlation", "relationship", "corr"],
-    "regression": ["regression", "slope", "trend", "forecast"],
-    "haversine": ["distance", "latitude", "longitude", "km", "miles", "haversine"],
-    "network_graph": ["shortest path", "node", "edge", "degree", "network", "graph"],
-    
-    # GA8: Visualization
-    "chart_bar": ["bar chart", "bar plot", "bars"],
-    "chart_scatter": ["scatter", "scatterplot", "regression line"],
-    "chart_histogram": ["histogram", "distribution"],
-    "base64_image": ["base64", "PNG", "encode", "image"],
-    
-    # GA4: LLM
-    "embedding": ["embedding", "similarity", "cosine", "most similar"],
-    "llm_api": ["chat completion", "generate", "LLM", "GPT", "Gemini"],
-    "prompt_inject": ["prompt injection", "reveal", "secret", "code word"],
-    "function_call": ["function calling", "JSON schema", "structured output"],
-    
-    # Special
-    "intro_page": ["click", "start", "begin", "welcome", "introduction"],
+# TDS Course Question Patterns - FLEXIBLE detection (not exhaustive)
+# These are HINTS for the LLM, not strict matching rules
+TDS_QUESTION_HINTS = {
+    # Pattern groups that suggest certain task types
+    "data_analysis_hints": ["sum", "total", "count", "filter", "where", "average", "group by", "rows"],
+    "sql_hints": ["sql", "select", "from", "duckdb", "sqlite", "query"],
+    "api_hints": ["api", "endpoint", "github", "repository", "request", "fetch"],
+    "command_hints": ["git", "uv", "curl", "wget", "bash", "run", "command"],
+    "chart_hints": ["chart", "plot", "visualization", "base64", "png", "image"],
+    "geo_hints": ["latitude", "longitude", "distance", "km", "miles", "haversine"],
+    "network_hints": ["graph", "node", "edge", "shortest path", "networkx"],
 }
 
-# Answer format detection keywords
+# Answer format detection - used as fallback hints
 ANSWER_FORMATS = {
     "number": ["sum", "count", "total", "average", "how many", "percentage", "ratio"],
     "hash": ["SHA", "hash", "checksum", "MD5"],
@@ -110,18 +60,6 @@ ANSWER_FORMATS = {
     "base64_image": ["base64", "PNG", "image", "chart", "plot", "encode"],
     "hex_color": ["color", "hex", "#", "RGB"],
     "string": ["name", "text", "value", "extract"],
-}
-
-# TDS module-specific answer format guidance
-TDS_ANSWER_FORMATS = {
-    "GA1": {"primary": "command", "examples": ["uv run script.py", "git commit -m 'msg'"]},
-    "GA2": {"primary": "command", "examples": ["docker build .", "vercel deploy"]},
-    "GA3": {"primary": "string", "examples": ["generated code", "base64 encoded"]},
-    "GA4": {"primary": "string", "examples": ["API response", "embedding result", "secret code"]},
-    "GA5": {"primary": "number|json", "examples": ["42", "[{\"row\": 1}]", "extracted text"]},
-    "GA6": {"primary": "number|string", "examples": ["sum: 12345", "count: 42", "cleaned value"]},
-    "GA7": {"primary": "number", "examples": ["correlation: 0.85", "distance: 123.45 km", "path length: 5"]},
-    "GA8": {"primary": "base64_image", "examples": ["data:image/png;base64,iVBOR..."]},
 }
 
 
