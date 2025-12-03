@@ -76,7 +76,7 @@ async def test_llm():
         
         return {
             "status": "ok",
-            "model": client.primary_model,
+            "gemini_model": settings.llm.gemini_model,
             "response": response,
             "message": "LLM is working correctly"
         }
