@@ -61,40 +61,7 @@ def should_force_submit(session: SessionState) -> bool:
     return time_remaining_safe(session) <= 5
 
 
-def extract_answer_from_context(merged_context: dict, question_text: str) -> Any:
-    """
-    Try to extract an answer from context without LLM.
-    Looks for common patterns like "secret code", numbers, etc.
-    """
-    import re
-    
-    # Check scraped page content for common answer patterns
-    content = merged_context.get('scraped_page', '')
-    if not content:
-        content = merged_context.get('webpage_text', '')
-    if not content:
-        content = merged_context.get('text_content', '')
-    
-    if not content:
-        return None
-    
-    # Pattern 1: "Secret code is <strong>XXXXX</strong>"
-    secret_match = re.search(r'[Ss]ecret\s+code\s+is\s*[<strong>]*(\d+)', content)
-    if secret_match:
-        return secret_match.group(1)
-    
-    # Pattern 2: Look for numbers in emphasized text
-    strong_numbers = re.findall(r'<strong>(\d+)</strong>', content)
-    if strong_numbers:
-        return strong_numbers[0]
-    
-    # Pattern 3: If question asks for a number, find the first prominent number
-    if any(word in question_text.lower() for word in ['number', 'code', 'value', 'sum', 'total']):
-        numbers = re.findall(r'\b(\d{3,})\b', content)  # Numbers with 3+ digits
-        if numbers:
-            return numbers[0]
-    
-    return None
+# extract_answer_from_context removed - using LLM-driven approach instead
 
 
 async def scrape_url_with_browser(page, url: str, session: SessionState) -> str:
@@ -417,228 +384,30 @@ async def solve_quiz_pipeline(
                 
                 session.cleaned_data = df
                 
-                # ==================== STAGE 7: ANALYSIS ====================
+                # ==================== STAGE 7: LLM-DRIVEN ANALYSIS ====================
                 logger.info("")
-                logger.info("🔬 STAGE 7: Analysis & Answer Generation")
-                answer: Any = None
-                context_for_llm = ""  # Initialize here to avoid stale values from previous iterations
-                effective_question = raw_question  # Initialize here too
+                logger.info("🔬 STAGE 7: LLM-Driven Analysis & Answer Generation")
+                logger.info("   (No hardcoded patterns - LLM decides everything)")
                 
-                # ===== SMART DIRECT EXTRACTION (bypass LLM when possible) =====
+                # Import the LLM analysis module
+                from .llm_analysis import solve_with_llm
                 
-                # 1. Image dominant color question
-                if merged_context.get('dominant_color') and ('color' in raw_question.lower() or 'hex' in raw_question.lower() or 'rgb' in raw_question.lower()):
-                    answer = merged_context['dominant_color']
-                    logger.info(f"   ✓ Direct answer from image color: {answer}")
-                
-                # 2. GitHub API tree counting
-                elif merged_context.get('github_config') and ('count' in raw_question.lower() or '.md' in raw_question.lower()):
-                    from .data_sourcing import call_github_api
-                    config = merged_context['github_config']
-                    count = await call_github_api(
-                        owner=config.get('owner', ''),
-                        repo=config.get('repo', ''),
-                        sha=config.get('sha', ''),
-                        path_prefix=config.get('pathPrefix', ''),
-                        extension=config.get('extension', '.md')
+                # Use LLM to analyze question and generate answer
+                try:
+                    answer = await solve_with_llm(
+                        llm_client=llm_client,
+                        question=raw_question,
+                        context=merged_context,
+                        df=df,
+                        session=session
                     )
-                    # Add email offset if mentioned
-                    if 'email' in raw_question.lower() and 'offset' in raw_question.lower():
-                        email_length = len(session.email)
-                        offset = email_length % 2
-                        answer = count + offset
-                        logger.info(f"   ✓ GitHub API count: {count} + offset {offset} = {answer}")
-                    else:
-                        answer = count
-                        logger.info(f"   ✓ GitHub API count: {answer}")
-                
-                # 3. CSV to JSON normalization
-                elif df is not None and 'json' in raw_question.lower() and ('normalize' in raw_question.lower() or 'snake_case' in raw_question.lower()):
-                    import json
-                    # Normalize column names to snake_case
-                    df.columns = df.columns.str.strip().str.lower().str.replace(r'\s+', '_', regex=True)
-                    
-                    # Rename common columns
-                    rename_map = {'id': 'id', 'name': 'name', 'joined': 'joined', 'value': 'value'}
-                    for old_col in df.columns:
-                        for std_name in rename_map:
-                            if std_name in old_col.lower():
-                                df = df.rename(columns={old_col: std_name})
-                                break
-                    
-                    # Convert dates to ISO-8601
-                    for col in df.columns:
-                        if 'date' in col.lower() or col == 'joined':
-                            try:
-                                df[col] = pd.to_datetime(df[col]).dt.strftime('%Y-%m-%d')
-                            except Exception:
-                                pass
-                    
-                    # Convert values to integers where applicable
-                    for col in df.columns:
-                        if col == 'value' or 'value' in col.lower() or col == 'id':
-                            try:
-                                df[col] = df[col].astype(int)
-                            except Exception:
-                                pass
-                    
-                    # Sort by id
-                    if 'id' in df.columns:
-                        df = df.sort_values('id')
-                    
-                    # Convert to JSON array
-                    answer = df.to_json(orient='records')
-                    logger.info(f"   ✓ CSV normalized to JSON: {len(answer)} chars")
-                
-                # 4. Audio transcript - just use it directly
-                elif merged_context.get('audio_transcript') and 'transcri' in raw_question.lower():
-                    answer = merged_context['audio_transcript'].lower().strip()
-                    logger.info(f"   ✓ Direct audio transcript: {answer}")
-                
-                # 5. UV http command construction
-                elif 'uv' in raw_question.lower() and 'http' in raw_question.lower() and 'get' in raw_question.lower():
-                    import re
-                    # Extract the URL from the question
-                    url_match = re.search(r'https://[^\s<>"\']+\.json\?email=', raw_question)
-                    if url_match:
-                        base_url = url_match.group(0)
-                        full_url = base_url + session.email
-                        answer = f'uv http get {full_url} -H "Accept: application/json"'
-                        logger.info(f"   ✓ UV command constructed: {answer}")
-                
-                # 6. Git commands for staging and committing
-                elif 'git' in raw_question.lower() and 'commit' in raw_question.lower():
-                    import re
-                    # Extract file name and commit message
-                    file_match = re.search(r'stage\s+(?:only\s+)?(\S+)', raw_question, re.IGNORECASE)
-                    msg_match = re.search(r'message\s+["\']([^"\']+)["\']', raw_question, re.IGNORECASE)
-                    if file_match and msg_match:
-                        filename = file_match.group(1)
-                        commit_msg = msg_match.group(1)
-                        answer = f'git add {filename}\ngit commit -m "{commit_msg}"'
-                        logger.info(f"   ✓ Git commands constructed: {answer}")
-                
-                # 7. Direct path extraction (when question explicitly states the answer)
-                elif 'correct relative link target is exactly' in raw_question.lower() or 'submit that exact string' in raw_question.lower():
-                    import re
-                    # Look for path patterns like /project2/something.md
-                    path_match = re.search(r'(/project\d*/[a-zA-Z0-9\-_.]+\.[a-zA-Z]+)', raw_question)
-                    if path_match:
-                        answer = path_match.group(1)
-                        logger.info(f"   ✓ Direct path extracted: {answer}")
-                
-                # 8. ZIP file with logs - sum bytes for download events
-                elif merged_context.get('logs_data') and 'sum' in raw_question.lower() and 'bytes' in raw_question.lower():
-                    logs_data = merged_context['logs_data']
-                    total_bytes = sum(entry.get('bytes', 0) for entry in logs_data if entry.get('event') == 'download')
-                    # Add email offset if mentioned
-                    if 'email' in raw_question.lower() and 'offset' in raw_question.lower() and 'mod 5' in raw_question.lower():
-                        email_length = len(session.email)
-                        offset = email_length % 5
-                        answer = total_bytes + offset
-                        logger.info(f"   ✓ Logs sum: {total_bytes} + offset {offset} = {answer}")
-                    else:
-                        answer = total_bytes
-                        logger.info(f"   ✓ Logs sum: {answer}")
-                
-                # ===== LLM-BASED ANALYSIS (when direct extraction not possible) =====
-                if answer is None:
-                    # Build context string for LLM
-                    context_for_llm = ""
-                    if merged_context.get('scraped_page'):
-                        context_for_llm += f"\n=== SCRAPED PAGE CONTENT ===\n{merged_context['scraped_page'][:5000]}\n"
-                    if merged_context.get('audio_transcript'):
-                        context_for_llm += f"\n=== AUDIO TRANSCRIPT ===\n{merged_context['audio_transcript']}\n"
-                    if merged_context.get('pdf_text'):
-                        context_for_llm += f"\n=== PDF CONTENT ===\n{merged_context['pdf_text'][:5000]}\n"
-                    if merged_context.get('webpage_text'):
-                        context_for_llm += f"\n=== WEBPAGE CONTENT ===\n{merged_context['webpage_text'][:3000]}\n"
-                    if merged_context.get('text_content'):
-                        context_for_llm += f"\n=== TEXT CONTENT ===\n{merged_context['text_content'][:3000]}\n"
-                    if merged_context.get('cutoff'):
-                        context_for_llm += f"\n=== CUTOFF VALUE ===\n{merged_context['cutoff']}\n"
-                    
-                    # If we have an audio transcript, it likely contains the instructions
-                    # Append it to the question text so LLM understands the task
-                    effective_question = raw_question
-                    if merged_context.get('audio_transcript'):
-                        effective_question = f"{raw_question}\n\n[AUDIO TRANSCRIPT INSTRUCTIONS]: {merged_context['audio_transcript']}"
-                        logger.info(f"   📝 Audio instructions appended to question")
-                    
-                    # Use LLM to generate and execute analysis code
-                    if df is not None and not df.empty:
-                        df_info = get_dataframe_info(df)
-                        logger.info(f"   DataFrame info: {df_info.get('shape')}, columns: {df_info.get('columns', [])[:5]}")
-                        
-                        if context_for_llm:
-                            df_info['additional_context'] = context_for_llm
-                        
-                        try:
-                            logger.info("   🤖 Generating analysis code with LLM...")
-                            analysis_code = await llm_client.generate_analysis_code(df_info, effective_question)
-                            logger.info(f"   Generated code:")
-                            for line in analysis_code.split('\n')[:10]:
-                                logger.info(f"      {line}")
-                            
-                            answer, output, error = await execute_analysis_code(analysis_code, df)
-                            
-                            if error:
-                                logger.warning(f"   ⚠️ Code execution error: {error}")
-                                logger.info("   Falling back to simple analysis...")
-                                answer = simple_analysis(df, effective_question)
-                            else:
-                                logger.info(f"   ✓ Code execution successful")
-                        except Exception as e:
-                            logger.warning(f"   ⚠️ LLM analysis exception: {e}")
-                            answer = simple_analysis(df, effective_question)
-                        
-                        session.analysis_result = answer
-                    
-                    elif context_for_llm:
-                        logger.info("   🤖 Using LLM to answer from context...")
-                        try:
-                            answer = await llm_client.answer_from_context(context_for_llm, effective_question)
-                            session.analysis_result = answer
-                            logger.info(f"   ✓ LLM answer: {str(answer)[:100]}...")
-                        except Exception as e:
-                            logger.warning(f"   ⚠️ LLM context analysis failed: {e}")
-                            # Try to extract answer from context directly
-                            answer = extract_answer_from_context(merged_context, effective_question)
-                            if answer:
-                                logger.info(f"   ✓ Extracted answer from context: {str(answer)[:100]}...")
-                    else:
-                        logger.info("   🤖 No data available, asking LLM directly...")
-                        try:
-                            direct_answer = await llm_client.answer_from_context(
-                                f"Question page content:\n{effective_question}",
-                                effective_question
-                            )
-                            answer = direct_answer
-                            logger.info(f"   ✓ LLM direct answer: {str(answer)[:100]}...")
-                        except Exception as e:
-                            logger.warning(f"   ⚠️ LLM direct answer failed: {e}")
-                
-                # UNIVERSAL FALLBACK: Apply for any empty answer (regardless of which branch we came from)
-                if not answer or (isinstance(answer, str) and not answer.strip()):
-                    logger.warning("   ⚠️ Answer is empty, checking fallbacks...")
-                    
-                    # Check if this looks like an intro/instruction page
-                    if "how to play" in raw_question.lower() or "start by posting" in raw_question.lower():
-                        answer = "start"
-                        logger.info(f"   ✓ Using 'start' for intro page")
-                    elif "anything" in raw_question.lower():
-                        answer = "automated_solver_response"
-                        logger.info(f"   ✓ Using fallback answer for 'anything' question")
-                    else:
-                        # Try to extract from context as last resort
-                        extracted = extract_answer_from_context(merged_context, effective_question)
-                        if extracted:
-                            answer = extracted
-                            logger.info(f"   ✓ Extracted answer from context: {str(answer)[:100]}...")
-                        else:
-                            # Absolute last resort - submit something
-                            answer = "start"
-                            logger.info(f"   ✓ Using 'start' as absolute fallback")
+                    session.analysis_result = answer
+                    logger.info(f"   ✓ LLM-driven answer: {str(answer)[:100]}...")
+                except Exception as e:
+                    logger.error(f"   ❌ LLM analysis failed: {e}")
+                    # Ultimate fallback
+                    answer = "start"
+                    logger.info(f"   ✓ Using 'start' as fallback")
                 
                 # ==================== STAGE 8: FORMAT ANSWER ====================
                 logger.info("")
