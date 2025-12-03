@@ -4,18 +4,47 @@ LLM-driven analysis module.
 This module contains all LLM-driven logic for solving quiz questions.
 NO hardcoded patterns - all decisions go through LLM.
 
-Covers ALL TDS course topics:
-- Data Analysis: pandas, DuckDB, SQL, aggregation, filtering, grouping, joins
-- Web Scraping: CSS selectors, BeautifulSoup, JavaScript rendering
-- API Calls: GitHub API, REST APIs, authentication, rate limits
-- Command Generation: uv, git, curl, wget, bash, shell commands
-- File Processing: PDF, CSV, JSON, JSONL, Parquet, Excel
-- Network Analysis: NetworkX, shortest paths, graph operations, centrality
-- Geospatial: Haversine distance, coordinates, lat/long, mapping
-- Image Analysis: dominant color, compression, base64 encoding
-- Audio/Video: transcription, YouTube, audio extraction
-- LLM Tasks: prompt injection, embeddings, function calling, tokenization
-- Statistical: correlation, regression, forecasting, outlier detection
+=== THE SOUL OF TDS QUIZ QUESTIONS ===
+
+Based on deep analysis of the TDS course repository, questions follow these patterns:
+
+1. DATA SOURCING (GA5):
+   - Download files: wget, curl, requests
+   - API calls: GitHub API, REST endpoints
+   - Web scraping: HTML tables, CSS selectors, BeautifulSoup
+   - PDF extraction: pdfplumber, tabula, page-specific data
+   
+2. DATA PREPARATION (GA6):
+   - pandas transformations: filter, groupby, merge, pivot
+   - DuckDB SQL queries: SELECT, WHERE, GROUP BY, HAVING
+   - Regex cleaning: extract patterns, normalize text
+   - Format conversion: CSV to JSON, Excel to DataFrame
+
+3. DATA ANALYSIS (GA7):
+   - Statistical: sum, count, average, correlation, regression slope
+   - Geospatial: Haversine distance, coordinates, lat/long
+   - Network: NetworkX, shortest path, node degree, centrality
+   - Time series: date filtering, counting specific days (e.g., Thursdays)
+
+4. DATA VISUALIZATION (GA8):
+   - Chart generation: matplotlib, seaborn plots
+   - Base64 encoding: PNG < 100KB requirement
+   - Specific chart types: bar, scatter with regression line, histograms
+
+5. LLM-SPECIFIC (GA4):
+   - API calls: chat completions, embeddings
+   - Function calling: JSON schema generation
+   - Prompt injection: crafting prompts to extract secrets
+   - Token counting, similarity calculations
+
+6. COMMANDS (GA1-GA3):
+   - uv commands: uv run, uv add
+   - git commands: clone, commit, push
+   - bash/shell: file operations, grep, sort, SHA hash
+
+CRITICAL: Questions are PARAMETERIZED using student email as seed.
+CRITICAL: Answers must be EXACT (numbers, hashes) or within tolerance.
+CRITICAL: 3-minute deadline - speed over perfection.
 """
 
 import json
@@ -27,18 +56,60 @@ import pandas as pd
 from .logging_utils import logger
 
 
-# Course topics knowledge base for better question understanding
-TDS_TOPICS = {
-    "data_sourcing": ["API", "scraping", "wget", "curl", "httpx", "requests", "download", "fetch"],
-    "data_preparation": ["clean", "transform", "filter", "merge", "join", "pandas", "DuckDB", "OpenRefine", "regex"],
-    "data_analysis": ["sum", "count", "average", "mean", "median", "correlation", "regression", "aggregate", "groupby"],
-    "data_visualization": ["chart", "plot", "graph", "seaborn", "matplotlib", "base64", "image"],
-    "git_github": ["git", "commit", "push", "pull", "branch", "clone", "repository", "GitHub"],
-    "llm": ["LLM", "GPT", "Gemini", "prompt", "token", "embedding", "function calling"],
-    "network": ["graph", "node", "edge", "shortest path", "NetworkX", "centrality", "degree"],
-    "geospatial": ["latitude", "longitude", "coordinate", "distance", "haversine", "location", "map"],
-    "deployment": ["Docker", "Vercel", "Hugging Face", "FastAPI", "deploy", "server"],
-    "shell": ["bash", "terminal", "command", "uv", "pip", "npm", "shell script"],
+# TDS Course Question Patterns - derived from actual GA analysis
+TDS_QUESTION_PATTERNS = {
+    # GA1: Development Tools
+    "uv_command": ["uv run", "uv add", "uv pip", "install uv"],
+    "git_command": ["git clone", "git commit", "git push", "git pull", "git branch"],
+    "bash_file": ["count files", "find files", "sort files", "recent files", "log files"],
+    "hash_sha": ["SHA", "hash", "checksum", "sha256", "md5"],
+    
+    # GA5: Data Sourcing
+    "api_call": ["API", "endpoint", "fetch", "request", "GET", "POST"],
+    "github_api": ["GitHub", "repository", "files", "tree", "contents"],
+    "web_scrape": ["scrape", "CSS selector", "BeautifulSoup", "HTML table"],
+    "pdf_extract": ["PDF", "page", "table", "extract"],
+    
+    # GA6: Data Preparation  
+    "pandas_filter": ["filter", "where", "condition", "rows where"],
+    "pandas_group": ["group by", "aggregate", "sum by", "count by"],
+    "pandas_merge": ["merge", "join", "combine", "common rows"],
+    "sql_query": ["SQL", "SELECT", "FROM", "WHERE", "DuckDB"],
+    "regex_extract": ["regex", "pattern", "extract", "match"],
+    
+    # GA7: Data Analysis
+    "sum_total": ["sum", "total", "add up", "calculate total"],
+    "count_items": ["count", "how many", "number of"],
+    "correlation": ["correlation", "relationship", "corr"],
+    "regression": ["regression", "slope", "trend", "forecast"],
+    "haversine": ["distance", "latitude", "longitude", "km", "miles", "haversine"],
+    "network_graph": ["shortest path", "node", "edge", "degree", "network", "graph"],
+    
+    # GA8: Visualization
+    "chart_bar": ["bar chart", "bar plot", "bars"],
+    "chart_scatter": ["scatter", "scatterplot", "regression line"],
+    "chart_histogram": ["histogram", "distribution"],
+    "base64_image": ["base64", "PNG", "encode", "image"],
+    
+    # GA4: LLM
+    "embedding": ["embedding", "similarity", "cosine", "most similar"],
+    "llm_api": ["chat completion", "generate", "LLM", "GPT", "Gemini"],
+    "prompt_inject": ["prompt injection", "reveal", "secret", "code word"],
+    "function_call": ["function calling", "JSON schema", "structured output"],
+    
+    # Special
+    "intro_page": ["click", "start", "begin", "welcome", "introduction"],
+}
+
+# Answer format detection keywords
+ANSWER_FORMATS = {
+    "number": ["sum", "count", "total", "average", "how many", "percentage", "ratio"],
+    "hash": ["SHA", "hash", "checksum", "MD5"],
+    "command": ["command", "run", "execute", "bash", "terminal"],
+    "json": ["JSON", "array", "object", "{}"],
+    "base64_image": ["base64", "PNG", "image", "chart", "plot", "encode"],
+    "hex_color": ["color", "hex", "#", "RGB"],
+    "string": ["name", "text", "value", "extract"],
 }
 
 
@@ -46,21 +117,27 @@ async def analyze_question_deeply(llm_client, question_text: str, context: dict)
     """
     Use LLM to deeply analyze the question and determine the solution strategy.
     
-    Returns a structured analysis with task type, answer format, and solution strategy.
+    This is the BRAIN of the quiz solver - it must understand the SOUL of TDS questions:
     
-    Task types:
-    - data_analysis: pandas/SQL analysis on DataFrames
-    - web_scrape: CSS selectors, BeautifulSoup extraction
-    - command_generation: git, uv, curl, wget, bash commands
-    - api_call: GitHub API, REST API calls
-    - text_extraction: Extract values from PDF, text, webpage
-    - audio_transcription: Audio content extraction
-    - image_analysis: Color analysis, image questions
-    - network_analysis: NetworkX, graph analysis, shortest paths
-    - geospatial: Haversine distance, coordinates
-    - llm_task: Prompt injection, embeddings, function calling
-    - json_transform: Convert data to JSON format
-    - intro_page: Quiz intro/start page
+    1. PARAMETERIZED: Same logic, different values per student (email-based seed)
+    2. EXACT ANSWERS: Numbers must be precise, hashes must match exactly
+    3. TIME PRESSURE: 3 minutes total, optimize for speed
+    4. PRACTICAL: Tests ability to DO things, not theory
+    
+    Task types mapping to TDS modules:
+    - data_analysis: GA6/GA7 - pandas, SQL, aggregation, statistics
+    - web_scrape: GA5 - CSS selectors, BeautifulSoup, HTML tables
+    - command_generation: GA1/GA2 - git, uv, curl, wget, bash commands
+    - api_call: GA4/GA5 - GitHub API, REST APIs, LLM endpoints
+    - text_extraction: GA5/GA6 - PDF tables, page-specific data
+    - audio_transcription: GA4 - Gemini audio API, Whisper
+    - image_analysis: GA4/GA8 - dominant color, OCR, base64
+    - network_analysis: GA7 - NetworkX, shortest paths, degree
+    - geospatial: GA7 - Haversine distance, lat/long calculations
+    - llm_task: GA4 - embeddings, function calling, prompt injection
+    - json_transform: GA6 - format conversion, structured output
+    - visualization: GA8 - matplotlib charts, base64 PNG encoding
+    - intro_page: Start/welcome pages
     """
     
     # Build context summary for LLM
@@ -71,6 +148,8 @@ async def analyze_question_deeply(llm_client, question_text: str, context: dict)
         context_summary.append(f"Image analyzed - dominant color: {context['dominant_color']}")
     if context.get('pdf_text'):
         context_summary.append(f"PDF text available: {len(context['pdf_text'])} chars")
+    if context.get('pdf_tables'):
+        context_summary.append(f"PDF tables: {len(context['pdf_tables'])} tables extracted")
     if context.get('dataframe') is not None:
         df = context['dataframe']
         context_summary.append(f"DataFrame available: {df.shape}, columns: {list(df.columns)}")
@@ -84,10 +163,13 @@ async def analyze_question_deeply(llm_client, question_text: str, context: dict)
         context_summary.append(f"HTML content: {len(context['html_content'])} chars")
     if context.get('edges_data') or context.get('graph_data'):
         context_summary.append(f"Graph/network data available")
+    if context.get('zip_files'):
+        context_summary.append(f"ZIP files: {len(context['zip_files'])} files")
     
     context_str = "\n".join(context_summary) if context_summary else "No additional context available"
     
-    analysis_prompt = f"""Analyze this quiz question and determine the best solution approach.
+    # Enhanced analysis prompt based on TDS course patterns
+    analysis_prompt = f"""You are an expert at solving TDS (Tools in Data Science) quiz questions.
 
 QUESTION:
 {question_text}
@@ -95,37 +177,38 @@ QUESTION:
 AVAILABLE CONTEXT:
 {context_str}
 
-Return ONLY valid JSON with this structure:
+TDS QUESTION PATTERNS TO RECOGNIZE:
+
+1. DATA AGGREGATION: "sum", "total", "count", "average", "how many" → compute numeric answer
+2. FILTERING: "where", "filter", "only", "rows with" → filter then aggregate
+3. GITHUB/API: "repository", "files", "API endpoint" → make API call, count results
+4. COMMAND: "git", "uv", "curl", "wget", "bash" → generate shell command
+5. PDF/TABLE: "page X", "table", "column" → extract from specific location
+6. CHART: "plot", "chart", "visualization", "base64" → generate matplotlib, encode PNG
+7. DISTANCE: "latitude", "longitude", "distance", "km" → Haversine formula
+8. NETWORK: "shortest path", "node", "edge", "degree" → NetworkX operations
+9. EMBEDDING: "most similar", "embedding", "cosine" → compute similarity
+10. INTRO PAGE: "start", "click", "begin", "welcome" → return "start"
+
+Return ONLY valid JSON:
 {{
-    "task_type": "data_analysis|web_scrape|command_generation|api_call|text_extraction|audio_transcription|image_analysis|network_analysis|geospatial|llm_task|json_transform|intro_page",
-    "answer_format": "number|string|json|boolean|command|path|hex_color|list",
-    "solution_strategy": "<describe exactly how to solve this step by step>",
-    "data_needed": ["<list what data is needed>"],
-    "key_values_to_extract": ["<specific values to find>"],
-    "transformations": ["<any transformations needed>"],
+    "task_type": "data_analysis|web_scrape|command_generation|api_call|text_extraction|audio_transcription|image_analysis|network_analysis|geospatial|llm_task|json_transform|visualization|intro_page",
+    "answer_format": "number|string|json|boolean|command|hash|hex_color|base64_image",
+    "solution_strategy": "<EXACT steps: 1. Load data from X, 2. Filter by Y, 3. Calculate Z>",
+    "column_to_aggregate": "<if data question, which column to sum/count>",
+    "filter_condition": "<if filtering needed, what condition>",
+    "page_number": <if PDF, which page (0-indexed)>,
+    "api_endpoint": "<if API call, construct the URL>",
     "personalization": {{
         "uses_email": true/false,
-        "offset_calculation": "<formula if any, e.g., 'len(email) % 5'>"
+        "offset_formula": "<e.g., len(email) % 10>"
     }},
+    "precision": "<decimal places if numeric>",
     "confidence": 0.0-1.0,
-    "fallback_answer": "<if we can't compute, what to submit>"
+    "fallback_answer": "<safe default: 'start' for intro, 0 for numbers>"
 }}
 
-Task type guidance:
-- data_analysis: Questions about filtering, aggregating, counting, summing data in CSV/DataFrame
-- web_scrape: Questions needing CSS selectors or HTML parsing
-- command_generation: Questions asking for git, uv, curl, wget, bash commands
-- api_call: Questions about GitHub repos, REST APIs, counting files
-- text_extraction: Questions asking to find specific values in text/PDF
-- audio_transcription: Questions about audio content
-- image_analysis: Questions about image colors, visual content
-- network_analysis: Questions about graphs, shortest paths, connections
-- geospatial: Questions about distances, coordinates, locations
-- llm_task: Questions about prompts, tokens, embeddings, function calling
-- json_transform: Questions asking for JSON output format
-- intro_page: Quiz intro that just needs "start" answer
-
-Be specific about the solution strategy."""
+CRITICAL: Be SPECIFIC. "Sum column X where Y > Z" not "analyze the data"."""
 
     try:
         response = await llm_client.generate(analysis_prompt, max_tokens=800, temperature=0.1)
@@ -138,6 +221,7 @@ Be specific about the solution strategy."""
         
         analysis = json.loads(response)
         logger.info(f"   📊 Question analysis: task={analysis.get('task_type')}, format={analysis.get('answer_format')}")
+        logger.info(f"   📊 Strategy: {analysis.get('solution_strategy', 'N/A')[:80]}...")
         return analysis
         
     except (json.JSONDecodeError, Exception) as e:
@@ -911,6 +995,131 @@ Return ONLY the answer (no explanations)."""
         return None
 
 
+async def llm_driven_visualization(
+    llm_client,
+    df: pd.DataFrame,
+    question: str,
+    analysis: dict,
+    session: Any
+) -> Optional[str]:
+    """
+    Use LLM to generate visualization code and return base64 PNG.
+    
+    GA8 questions often ask for:
+    - Bar charts (blue/green bars)
+    - Scatter plots with regression lines (red dotted)
+    - Histograms
+    - Line charts (cumulative)
+    
+    Output must be base64 PNG under 100KB.
+    """
+    import io
+    import base64
+    
+    df_info = {
+        'columns': list(df.columns),
+        'shape': df.shape,
+        'sample': df.head(3).to_string()
+    }
+    
+    chart_prompt = f"""Generate Python matplotlib code to create a chart.
+
+QUESTION: {question}
+
+DATAFRAME INFO:
+- Shape: {df_info['shape']}
+- Columns: {df_info['columns']}
+- Sample:
+{df_info['sample']}
+
+REQUIREMENTS:
+- Use matplotlib.pyplot as plt
+- The DataFrame is already loaded as 'df'
+- Save figure to a BytesIO buffer
+- Set figure size to (8, 6) for good quality
+- Set DPI to 100 to keep file size under 100KB
+- Use specific colors if mentioned (blue, green, red, etc.)
+- Add labels and title
+- Store the BytesIO buffer in variable 'buffer'
+
+Generate ONLY Python code (no explanations):
+
+import matplotlib.pyplot as plt
+import io
+
+# Your chart code here
+buffer = io.BytesIO()
+# ... save to buffer
+
+Code:"""
+
+    try:
+        code = await llm_client.generate(chart_prompt, max_tokens=600, temperature=0.1)
+        
+        # Clean code
+        code = code.strip()
+        if code.startswith("```"):
+            lines = code.split("\n")
+            code = "\n".join(lines[1:-1] if lines[-1].strip() in ["```", "```python"] else lines[1:])
+        
+        code = re.sub(r'^```\w*\n?', '', code)
+        code = re.sub(r'\n?```$', '', code)
+        
+        logger.info(f"   🎨 Generated chart code:")
+        for line in code.split('\n')[:5]:
+            logger.info(f"      {line}")
+        
+        # Execute the code
+        namespace = {
+            'df': df.copy(),
+            'pd': pd,
+            'np': __import__('numpy'),
+            'plt': __import__('matplotlib.pyplot'),
+            'io': io,
+            'buffer': None
+        }
+        
+        # Import matplotlib properly
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend
+        import matplotlib.pyplot as plt
+        namespace['plt'] = plt
+        
+        exec(code, namespace)
+        
+        buffer = namespace.get('buffer')
+        if buffer is None:
+            logger.warning("   ⚠️ No buffer produced")
+            return None
+        
+        # Encode to base64
+        buffer.seek(0)
+        image_data = buffer.getvalue()
+        
+        # Check size (must be under 100KB)
+        if len(image_data) > 100_000:
+            logger.warning(f"   ⚠️ Image too large: {len(image_data)} bytes, regenerating...")
+            # Try with lower DPI
+            plt.figure(figsize=(6, 4), dpi=80)
+            exec(code, namespace)
+            buffer = namespace.get('buffer')
+            if buffer:
+                buffer.seek(0)
+                image_data = buffer.getvalue()
+        
+        base64_str = base64.b64encode(image_data).decode('utf-8')
+        
+        # Return as data URI
+        data_uri = f"data:image/png;base64,{base64_str}"
+        
+        logger.info(f"   ✓ Chart generated: {len(base64_str)} chars")
+        return data_uri
+        
+    except Exception as e:
+        logger.error(f"   ❌ Visualization failed: {e}")
+        return None
+
+
 async def solve_with_llm(
     llm_client,
     question: str,
@@ -1028,6 +1237,12 @@ async def solve_with_llm(
     elif task_type == 'json_transform' and df is not None:
         answer = await llm_driven_json_transformation(
             llm_client, df, question, analysis
+        )
+    
+    # Visualization (chart generation as base64 PNG)
+    elif task_type == 'visualization':
+        answer = await llm_driven_visualization(
+            llm_client, df, question, analysis, context
         )
     
     # Fallback: Use LLM directly with all context
