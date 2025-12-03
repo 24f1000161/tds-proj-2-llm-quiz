@@ -112,6 +112,18 @@ ANSWER_FORMATS = {
     "string": ["name", "text", "value", "extract"],
 }
 
+# TDS module-specific answer format guidance
+TDS_ANSWER_FORMATS = {
+    "GA1": {"primary": "command", "examples": ["uv run script.py", "git commit -m 'msg'"]},
+    "GA2": {"primary": "command", "examples": ["docker build .", "vercel deploy"]},
+    "GA3": {"primary": "string", "examples": ["generated code", "base64 encoded"]},
+    "GA4": {"primary": "string", "examples": ["API response", "embedding result", "secret code"]},
+    "GA5": {"primary": "number|json", "examples": ["42", "[{\"row\": 1}]", "extracted text"]},
+    "GA6": {"primary": "number|string", "examples": ["sum: 12345", "count: 42", "cleaned value"]},
+    "GA7": {"primary": "number", "examples": ["correlation: 0.85", "distance: 123.45 km", "path length: 5"]},
+    "GA8": {"primary": "base64_image", "examples": ["data:image/png;base64,iVBOR..."]},
+}
+
 
 async def analyze_question_deeply(llm_client, question_text: str, context: dict) -> dict:
     """
