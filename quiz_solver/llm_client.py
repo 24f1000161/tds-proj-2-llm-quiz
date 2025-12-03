@@ -255,17 +255,16 @@ class LLMClient:
         
         url = f"https://aipipe.org/geminiv1beta/models/{model}:generateContent"
         
-        # Gemini 2.5+ are "thinking models" that need more tokens for reasoning
-        # Thinking can use 2000+ tokens alone before any output
-        is_thinking_model = "2.5" in model or "3" in model
-        if is_thinking_model:
-            actual_max_tokens = max(max_tokens * 12, 12000)
-            logger.debug(f"Thinking model detected ({model}), increasing tokens: {max_tokens} -> {actual_max_tokens}")
-        else:
-            actual_max_tokens = max_tokens
+        # Gemini 2.5+ are "thinking models" - disable thinking for fast responses
+        is_thinking_model = "2.5" in model or "gemini-3" in model
         
         # Gemini native request format
-        payload = {
+        generation_config: dict = {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens
+        }
+        
+        payload: dict = {
             "contents": [
                 {
                     "parts": [
@@ -273,11 +272,15 @@ class LLMClient:
                     ]
                 }
             ],
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": actual_max_tokens
-            }
+            "generationConfig": generation_config
         }
+        
+        # Disable thinking for 2.5 models
+        if is_thinking_model:
+            payload["generationConfig"]["thinkingConfig"] = {
+                "thinkingBudget": 0
+            }
+            logger.debug(f"Thinking model ({model}): disabled thinking for fast response")
         
         # Use Authorization Bearer header for aipipe (same as OpenRouter)
         headers = {
@@ -331,7 +334,7 @@ class LLMClient:
         """Generate using direct Gemini API.
         
         Handles both standard models (2.0) and thinking models (2.5+).
-        Thinking models need higher token limits to accommodate internal reasoning.
+        For 2.5+ models, we DISABLE thinking to get fast, direct responses.
         """
         
         if not self._http_client or not settings.llm.gemini_api_key:
@@ -341,25 +344,27 @@ class LLMClient:
         model = settings.llm.gemini_model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         
-        # Gemini 2.5+ are "thinking models" that need more tokens for reasoning
-        # They use internal "thought tokens" before generating output
-        # Example: 318 prompt tokens -> 1999 thinking tokens + output needed
-        is_thinking_model = "2.5" in model or "3" in model
-        if is_thinking_model:
-            # Thinking models need much more tokens - thinking can use 2000+ tokens alone
-            # Use 8000 minimum to ensure output space after thinking
-            actual_max_tokens = max(max_tokens * 8, 8000)
-            logger.debug(f"Thinking model detected ({model}), increasing tokens: {max_tokens} -> {actual_max_tokens}")
-        else:
-            actual_max_tokens = max_tokens
+        # Gemini 2.5+ are "thinking models" - they can use up to 24K tokens just for thinking!
+        # For our quiz solver, we want fast responses, so DISABLE thinking with thinkingBudget=0
+        is_thinking_model = "2.5" in model or "gemini-3" in model
         
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": actual_max_tokens
-            }
+        generation_config: dict = {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens
         }
+        
+        # Build payload
+        payload: dict = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": generation_config
+        }
+        
+        # Disable thinking for 2.5 models to get fast responses
+        if is_thinking_model:
+            payload["generationConfig"]["thinkingConfig"] = {
+                "thinkingBudget": 0  # Disable thinking - we want fast, direct answers
+            }
+            logger.debug(f"Thinking model ({model}): disabled thinking for fast response")
         
         headers = {
             "x-goog-api-key": settings.llm.gemini_api_key,
