@@ -67,15 +67,27 @@ async def get_logs(
     - **lines**: Number of log lines to return (default: 100, max: 5000)
     - **level**: Filter by log level (all, info, warning, error)
     """
-    log_dir = os.environ.get("LOG_DIR", "/app/logs")
-    log_file = os.path.join(log_dir, "quiz_solver.log")
+    # Try multiple possible log locations
+    log_locations = [
+        os.environ.get("LOG_DIR", "/tmp/quiz_solver_logs"),
+        "/tmp/quiz_solver_logs",
+        "/tmp",
+        "/app/logs",
+        "."
+    ]
     
-    # Fallback to current directory
-    if not os.path.exists(log_file):
-        log_file = "quiz_solver.log"
+    log_file = None
+    for log_dir in log_locations:
+        candidate = os.path.join(log_dir, "quiz_solver.log")
+        if os.path.exists(candidate):
+            log_file = candidate
+            break
     
-    if not os.path.exists(log_file):
-        return PlainTextResponse("No log file found", status_code=404)
+    if not log_file:
+        return PlainTextResponse(
+            f"No log file found. Checked: {[os.path.join(d, 'quiz_solver.log') for d in log_locations]}",
+            status_code=404
+        )
     
     try:
         with open(log_file, "r", encoding="utf-8") as f:
@@ -98,11 +110,21 @@ async def get_logs(
 @app.delete("/logs")
 async def clear_logs():
     """Clear the log file."""
-    log_dir = os.environ.get("LOG_DIR", "/app/logs")
-    log_file = os.path.join(log_dir, "quiz_solver.log")
+    # Try multiple possible log locations
+    log_locations = [
+        os.environ.get("LOG_DIR", "/tmp/quiz_solver_logs"),
+        "/tmp/quiz_solver_logs",
+        "/tmp",
+        "/app/logs",
+        "."
+    ]
     
-    if not os.path.exists(log_file):
-        log_file = "quiz_solver.log"
+    log_file = None
+    for log_dir in log_locations:
+        candidate = os.path.join(log_dir, "quiz_solver.log")
+        if os.path.exists(candidate):
+            log_file = candidate
+            break
     
     try:
         if os.path.exists(log_file):

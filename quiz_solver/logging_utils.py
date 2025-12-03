@@ -30,14 +30,16 @@ def setup_logging() -> logging.Logger:
     console_handler.setFormatter(formatter)
     
     # File handler (for Hugging Face Spaces persistence)
-    log_dir = os.environ.get("LOG_DIR", "/app/logs")
+    # HF Spaces: /tmp is always writable, /app/logs may not be
+    log_dir = os.environ.get("LOG_DIR", "/tmp/quiz_solver_logs")
     if not os.path.exists(log_dir):
         try:
             os.makedirs(log_dir, exist_ok=True)
         except Exception:
-            log_dir = "."  # Fallback to current directory
+            log_dir = "/tmp"  # Fallback to /tmp which is always writable
     
     log_file = os.path.join(log_dir, "quiz_solver.log")
+    file_handler = None
     try:
         file_handler = RotatingFileHandler(
             log_file,
@@ -47,6 +49,7 @@ def setup_logging() -> logging.Logger:
         )
         file_handler.setLevel(logging.DEBUG)  # Log everything to file
         file_handler.setFormatter(formatter)
+        print(f"📝 Logging to file: {log_file}")
     except Exception as e:
         file_handler = None
         print(f"Warning: Could not create file handler: {e}")
