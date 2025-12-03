@@ -239,6 +239,8 @@ class LLMClient:
         
         Uses: https://aipipe.org/geminiv1beta/models/MODEL:generateContent
         Auth: Authorization: Bearer {AIPIPE_TOKEN}
+        
+        Handles both standard models (2.0) and thinking models (2.5+).
         """
         
         if not self._http_client:
@@ -253,6 +255,14 @@ class LLMClient:
         
         url = f"https://aipipe.org/geminiv1beta/models/{model}:generateContent"
         
+        # Gemini 2.5+ are "thinking models" that need more tokens for reasoning
+        is_thinking_model = "2.5" in model or "3" in model
+        if is_thinking_model:
+            actual_max_tokens = max(max_tokens * 4, 2000)
+            logger.debug(f"Thinking model detected ({model}), increasing tokens: {max_tokens} -> {actual_max_tokens}")
+        else:
+            actual_max_tokens = max_tokens
+        
         # Gemini native request format
         payload = {
             "contents": [
@@ -264,7 +274,7 @@ class LLMClient:
             ],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens
+                "maxOutputTokens": actual_max_tokens
             }
         }
         
@@ -317,7 +327,11 @@ class LLMClient:
         max_tokens: int,
         temperature: float
     ) -> str:
-        """Generate using direct Gemini API."""
+        """Generate using direct Gemini API.
+        
+        Handles both standard models (2.0) and thinking models (2.5+).
+        Thinking models need higher token limits to accommodate internal reasoning.
+        """
         
         if not self._http_client or not settings.llm.gemini_api_key:
             raise RuntimeError("Gemini direct API not configured")
@@ -326,11 +340,21 @@ class LLMClient:
         model = settings.llm.gemini_model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         
+        # Gemini 2.5+ are "thinking models" that need more tokens for reasoning
+        # They use internal "thought tokens" before generating output
+        is_thinking_model = "2.5" in model or "3" in model
+        if is_thinking_model:
+            # Thinking models need ~3-4x more tokens to accommodate reasoning
+            actual_max_tokens = max(max_tokens * 4, 2000)
+            logger.debug(f"Thinking model detected ({model}), increasing tokens: {max_tokens} -> {actual_max_tokens}")
+        else:
+            actual_max_tokens = max_tokens
+        
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens
+                "maxOutputTokens": actual_max_tokens
             }
         }
         
