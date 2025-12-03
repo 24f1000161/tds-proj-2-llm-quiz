@@ -256,9 +256,10 @@ class LLMClient:
         url = f"https://aipipe.org/geminiv1beta/models/{model}:generateContent"
         
         # Gemini 2.5+ are "thinking models" that need more tokens for reasoning
+        # Thinking can use 2000+ tokens alone before any output
         is_thinking_model = "2.5" in model or "3" in model
         if is_thinking_model:
-            actual_max_tokens = max(max_tokens * 4, 2000)
+            actual_max_tokens = max(max_tokens * 12, 12000)
             logger.debug(f"Thinking model detected ({model}), increasing tokens: {max_tokens} -> {actual_max_tokens}")
         else:
             actual_max_tokens = max_tokens
@@ -342,10 +343,12 @@ class LLMClient:
         
         # Gemini 2.5+ are "thinking models" that need more tokens for reasoning
         # They use internal "thought tokens" before generating output
+        # Example: 318 prompt tokens -> 1999 thinking tokens + output needed
         is_thinking_model = "2.5" in model or "3" in model
         if is_thinking_model:
-            # Thinking models need ~3-4x more tokens to accommodate reasoning
-            actual_max_tokens = max(max_tokens * 4, 2000)
+            # Thinking models need much more tokens - thinking can use 2000+ tokens alone
+            # Use 8000 minimum to ensure output space after thinking
+            actual_max_tokens = max(max_tokens * 8, 8000)
             logger.debug(f"Thinking model detected ({model}), increasing tokens: {max_tokens} -> {actual_max_tokens}")
         else:
             actual_max_tokens = max_tokens
