@@ -19,10 +19,10 @@ class LLMConfig(BaseModel):
     aipipe_model: str = "gpt-4o-mini"
     aipipe_monthly_tokens: int = 1_000_000
     
-    # Gemini fallback settings
+    # Gemini settings (direct API - NOT through aipipe)
     gemini_api_key: Optional[str] = None
     gemini_model: str = "gemini-2.0-flash"
-    gemini_via_aipipe: bool = True  # Use Gemini through aipipe proxy
+    gemini_via_aipipe: bool = False  # Use direct Gemini API, not aipipe
     
     # Token thresholds
     auto_switch_threshold: float = 0.75
@@ -91,7 +91,7 @@ def load_settings() -> Settings:
             aipipe_model=os.getenv("AIPIPE_MODEL", "gpt-4o-mini"),
             gemini_api_key=os.getenv("GEMINI_API_KEY"),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-            gemini_via_aipipe=os.getenv("GEMINI_VIA_AIPIPE", "true").lower() == "true",
+            gemini_via_aipipe=os.getenv("GEMINI_VIA_AIPIPE", "false").lower() == "true",
         ),
         timeouts=TimeoutConfig(
             quiz_deadline_seconds=int(os.getenv("QUIZ_DEADLINE_SECONDS", "180")),

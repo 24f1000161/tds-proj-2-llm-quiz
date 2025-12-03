@@ -1,6 +1,10 @@
 """
 LLM client management with dual-model strategy.
-Supports aipipe (GPT models via OpenAI-compatible API) and Gemini as fallback.
+
+Model routing:
+- OpenAI models (gpt-4o-mini, etc.): Use AIPIPE proxy only
+- Gemini models: Use DIRECT Google API (GEMINI_API_KEY)
+
 Uses httpx for all API calls.
 """
 
@@ -55,15 +59,15 @@ class LLMClient:
         else:
             logger.warning("No AIPIPE_TOKEN found, skipping aipipe initialization")
         
-        # Check Gemini configuration
-        if settings.llm.gemini_via_aipipe and settings.llm.aipipe_token:
+        # Check Gemini configuration - PREFER DIRECT API
+        if settings.llm.gemini_api_key:
             self._gemini_configured = True
-            logger.info("Gemini configured via aipipe proxy")
-        elif settings.llm.gemini_api_key:
+            logger.info(f"Gemini configured with DIRECT API (model: {settings.llm.gemini_model})")
+        elif settings.llm.gemini_via_aipipe and settings.llm.aipipe_token:
             self._gemini_configured = True
-            logger.info("Gemini configured with direct API key")
+            logger.warning("Gemini configured via aipipe proxy (fallback only)")
         else:
-            logger.warning("No Gemini configuration found")
+            logger.warning("No GEMINI_API_KEY found - Gemini not available")
     
     async def close(self) -> None:
         """Close the HTTP client."""
@@ -71,15 +75,16 @@ class LLMClient:
             await self._http_client.aclose()
     
     def _select_model(self) -> str:
-        """Select which model to use based on token budget and availability.
+        """Select which model to use based on availability.
         
-        Since aipipe OpenAI quota is often exhausted, we prefer Gemini via aipipe
-        which uses the native Gemini endpoint.
+        Priority:
+        1. Gemini with DIRECT API (preferred - no quota issues)
+        2. Aipipe for OpenAI (fallback)
         """
         
-        # Prefer Gemini as primary since aipipe OpenAI quota is often exhausted
+        # Prefer Gemini with direct API as primary
         if self._gemini_configured:
-            logger.debug("Using Gemini via aipipe (preferred)")
+            logger.debug("Using Gemini (direct API preferred)")
             return "gemini"
         
         if self._aipipe_configured:
@@ -203,17 +208,26 @@ class LLMClient:
         max_tokens: int,
         temperature: float
     ) -> str:
-        """Generate using Gemini (via aipipe or direct API)."""
+        """Generate using Gemini - ALWAYS prefer direct API.
+        
+        Priority:
+        1. Direct Google API (if GEMINI_API_KEY is set)
+        2. Aipipe proxy (fallback only)
+        """
         
         if not self._gemini_configured or not self._http_client:
             raise RuntimeError("Gemini client not initialized")
         
-        if settings.llm.gemini_via_aipipe and settings.llm.aipipe_token:
-            # Use Gemini via aipipe's OpenRouter proxy
+        # ALWAYS prefer direct API if key is available
+        if settings.llm.gemini_api_key:
+            logger.debug("Using direct Gemini API")
+            return await self._generate_gemini_direct(prompt, max_tokens, temperature)
+        elif settings.llm.gemini_via_aipipe and settings.llm.aipipe_token:
+            # Fallback to aipipe proxy only if no direct key
+            logger.debug("Using Gemini via aipipe proxy (fallback)")
             return await self._generate_gemini_via_aipipe(prompt, max_tokens, temperature)
         else:
-            # Use direct Gemini API
-            return await self._generate_gemini_direct(prompt, max_tokens, temperature)
+            raise RuntimeError("No Gemini API configuration available")
     
     async def _generate_gemini_via_aipipe(
         self,
