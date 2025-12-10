@@ -963,7 +963,7 @@ QUESTION: {question}
 SOLUTION STRATEGY: {analysis.get('solution_strategy', '')}
 
 CONTEXT:
-{json.dumps({k: str(v)[:500] for k, v in context.items() if v}, indent=2)}
+{json.dumps({k: str(v)[:500] for k, v in context.items() if v is not None}, indent=2)}
 
 If this involves:
 - Prompt injection: Craft the shortest prompt to achieve the goal
