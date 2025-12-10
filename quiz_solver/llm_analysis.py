@@ -140,6 +140,11 @@ TDS QUESTION PATTERNS TO RECOGNIZE:
 9. EMBEDDING: "most similar", "embedding", "cosine" → compute similarity
 10. INTRO PAGE: "start", "click", "begin", "welcome" → return "start"
 
+RULES:
+- Use URLs EXACTLY as they appear in the question or context. Do NOT invent or hallucinate URLs.
+- If a command is requested, use the exact parameters specified.
+- For command generation tasks, ensure all URLs, filenames, and parameters match the question text exactly.
+
 Return ONLY valid JSON:
 {{
     "task_type": "data_analysis|web_scrape|command_generation|api_call|text_extraction|audio_transcription|image_analysis|network_analysis|geospatial|llm_task|json_transform|visualization|intro_page",
