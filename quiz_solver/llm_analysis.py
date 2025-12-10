@@ -333,6 +333,7 @@ SOLUTION STRATEGY: {analysis.get('solution_strategy', '')}
 {"USER EMAIL: " + session.email if analysis.get('personalization', {}).get('uses_email') else ""}
 
 Return ONLY the command string (no explanations, no code blocks).
+Do NOT quote URLs unless they contain spaces.
 If multiple commands are needed, separate them with newlines.
 Include all required flags and arguments exactly as specified."""
 
@@ -660,6 +661,45 @@ async def format_answer_dynamically(
     
     if expected_format == 'json':
         if isinstance(answer, str):
+            # Try to find JSON array or object in the string
+            answer = answer.strip()
+            # If it's wrapped in code blocks, strip them
+            if answer.startswith("```"):
+                lines = answer.split("\n")
+                if lines[0].strip().startswith("```"):
+                    answer = "\n".join(lines[1:])
+                if answer.strip().endswith("```"):
+                    answer = answer.strip()[:-3]
+                answer = answer.strip()
+            
+            # Try to parse as JSON first
+            try:
+                parsed = json.loads(answer)
+                return json.dumps(parsed)
+            except:
+                # Try ast.literal_eval for Python-style strings (single quotes)
+                try:
+                    import ast
+                    parsed = ast.literal_eval(answer)
+                    return json.dumps(parsed)
+                except:
+                    pass
+
+            # If it looks like JSON, return it. If it has extra text, try to extract.
+            import re
+            json_match = re.search(r'(\{.*\}|\[.*\])', answer, re.DOTALL)
+            if json_match:
+                # Try to parse the extracted part
+                try:
+                    parsed = json.loads(json_match.group(1))
+                    return json.dumps(parsed)
+                except:
+                    try:
+                        import ast
+                        parsed = ast.literal_eval(json_match.group(1))
+                        return json.dumps(parsed)
+                    except:
+                        return json_match.group(1) # Return as is if parsing fails
             return answer
         return json.dumps(answer)
     

@@ -205,6 +205,13 @@ async def solve_quiz_pipeline(
                 logger.info("")
                 logger.info("🧩 STAGE 3: Question Parsing")
                 question_components = extract_question_components(raw_question, session)
+                
+                # Filter out URLs with placeholders (e.g. {owner}, {repo})
+                question_components.data_sources = [
+                    url for url in question_components.data_sources 
+                    if '{' not in url and '}' not in url
+                ]
+                
                 session.question_id = question_components.question_id
                 session.submit_url = question_components.submit_url
                 session.expected_format = question_components.answer_format
