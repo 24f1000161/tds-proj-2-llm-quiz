@@ -678,10 +678,21 @@ async def analyze_image(url: str) -> dict[str, Any]:
 
 async def fetch_all_data_sources(data_sources: list[str], session: Any) -> dict[str, Any]:
     """Fetch data from all identified sources."""
+    from urllib.parse import urljoin
     
     fetched_data: dict[str, Any] = {}
+    # Handle session being either dict or Pydantic model
+    if hasattr(session, "current_url"):
+        base_url = session.current_url
+    else:
+        base_url = session.get("current_url", "")
     
     for source_url in data_sources:
+        # Resolve relative URLs
+        if base_url and not source_url.startswith(("http://", "https://")):
+            source_url = urljoin(base_url, source_url)
+            logger.info(f"Resolved relative URL: {source_url}")
+            
         try:
             if source_url.endswith('.pdf'):
                 fetched_data[source_url] = await download_and_parse_pdf(source_url)
