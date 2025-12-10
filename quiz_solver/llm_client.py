@@ -78,18 +78,18 @@ class LLMClient:
         """Select which model to use based on availability.
         
         Priority:
-        1. Gemini with DIRECT API (preferred - no quota issues)
-        2. Aipipe for OpenAI (fallback)
+        1. Aipipe (Primary - as requested by user)
+        2. Gemini (Fallback)
         """
         
-        # Prefer Gemini with direct API as primary
-        if self._gemini_configured:
-            logger.debug("Using Gemini (direct API preferred)")
-            return "gemini"
-        
+        # Prefer Aipipe as primary
         if self._aipipe_configured:
-            logger.debug("Using aipipe (fallback)")
+            logger.debug("Using aipipe (primary)")
             return "aipipe"
+            
+        if self._gemini_configured:
+            logger.debug("Using Gemini (fallback)")
+            return "gemini"
         
         raise RuntimeError("No LLM client available")
     
@@ -104,7 +104,7 @@ class LLMClient:
         import asyncio
         
         model_choice = self._select_model()
-        max_retries = 3
+        max_retries = 5
         
         for attempt in range(max_retries):
             try:
@@ -117,12 +117,12 @@ class LLMClient:
                 
                 # Handle rate limiting with retry
                 if "429" in error_str and attempt < max_retries - 1:
-                    wait_time = 2 ** (attempt + 1)  # 2, 4, 8 seconds
+                    wait_time = 2 ** (attempt + 1)  # 2, 4, 8, 16, 32 seconds
                     logger.warning(f"Rate limited, waiting {wait_time}s before retry {attempt + 2}/{max_retries}")
                     await asyncio.sleep(wait_time)
                     continue
                 
-                logger.error(f"Primary model ({model_choice}) failed: {e}")
+                logger.error(f"Primary model ({model_choice}) failed: {repr(e)}")
                 
                 # Try fallback on final failure
                 if model_choice == "aipipe" and self._gemini_configured:
@@ -130,14 +130,14 @@ class LLMClient:
                     try:
                         return await self._generate_gemini(prompt, max_tokens, temperature)
                     except Exception as fallback_e:
-                        logger.error(f"Fallback to Gemini also failed: {fallback_e}")
+                        logger.error(f"Fallback to Gemini also failed: {repr(fallback_e)}")
                         raise
                 elif model_choice == "gemini" and self._aipipe_configured:
                     logger.info("Falling back to aipipe")
                     try:
                         return await self._generate_aipipe(prompt, max_tokens, temperature, json_response)
                     except Exception as fallback_e:
-                        logger.error(f"Fallback to aipipe also failed: {fallback_e}")
+                        logger.error(f"Fallback to aipipe also failed: {repr(fallback_e)}")
                         raise
                 raise
         
@@ -150,42 +150,60 @@ class LLMClient:
         temperature: float,
         json_response: bool
     ) -> str:
-        """Generate using aipipe via OpenRouter endpoint.
+        """Generate using aipipe via OpenAI-compatible endpoint.
         
-        Uses: https://aipipe.org/openrouter/v1/chat/completions
-        Models: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, etc.
+        Uses: https://aipipe.org/openai/v1/chat/completions (default)
+        Models: gpt-5-nano, gpt-4o-mini, etc.
         """
         
         if not self._aipipe_configured or not self._http_client:
             raise RuntimeError("Aipipe client not initialized")
         
-        # Use OpenRouter endpoint for all models via aipipe
-        url = "https://aipipe.org/openrouter/v1/chat/completions"
+        # Use configured base URL
+        base_url = settings.llm.aipipe_base_url.rstrip("/")
+        url = f"{base_url}/chat/completions"
         
-        # Model needs provider prefix for OpenRouter
         model = settings.llm.aipipe_model
-        if not "/" in model:
-            # Add openai/ prefix if not present
+        
+        # If using OpenRouter endpoint, ensure prefix
+        if "openrouter" in base_url and "/" not in model:
             model = f"openai/{model}"
         
         payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
             "temperature": temperature
         }
+        
+        # Handle max_tokens vs max_completion_tokens for newer models (gpt-5, o1, etc.)
+        # gpt-5-nano requires max_completion_tokens and fixed temperature
+        if "gpt-5" in model or "o1-" in model:
+            # Reasoning models consume tokens for internal thought processes before generating output.
+            # If the limit is too low (e.g. 800), they may use it all on reasoning and return empty content.
+            # We enforce a higher minimum to prevent this.
+            payload["max_completion_tokens"] = max(max_tokens, 60000)
+            # These models often require temperature=1 or don't support it
+            payload["temperature"] = 1.0
+        else:
+            payload["max_tokens"] = max_tokens
+            payload["temperature"] = temperature
         
         if json_response:
             payload["response_format"] = {"type": "json_object"}
         
         headers = {
             "Authorization": f"Bearer {settings.llm.aipipe_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/sanand0/tools-in-data-science-public",
+            "X-Title": "TDS Quiz Solver"
         }
         
-        logger.debug(f"Calling OpenRouter via aipipe: {url} with model {model}")
+        logger.debug(f"Calling aipipe: {url} with model {model}")
         response = await self._http_client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
+        
+        if response.status_code != 200:
+            logger.error(f"Aipipe failed with status {response.status_code}: {response.text}")
+            response.raise_for_status()
         
         data = response.json()
         
@@ -193,10 +211,17 @@ class LLMClient:
         if "usage" in data:
             self.token_tracker.aipipe_used += data["usage"].get("total_tokens", 0)
         
+        if "choices" not in data or not data["choices"]:
+            raise ValueError(f"Aipipe returned no choices: {data}")
+            
         content = data["choices"][0]["message"]["content"]
         
         if not content or not content.strip():
-            raise ValueError("Aipipe returned empty response")
+            finish_reason = data["choices"][0].get("finish_reason")
+            logger.error(f"Aipipe returned empty content. Finish reason: {finish_reason}. Full response: {json.dumps(data)}")
+            raise ValueError(f"Aipipe returned empty response (finish_reason: {finish_reason})")
+            
+        return content
         
         logger.debug(f"Aipipe response: {content[:100]}...")
         
