@@ -401,7 +401,26 @@ Return ONLY valid JSON:
         if api_plan.get('api_type') == 'none':
             return None
         
-        # Execute the API call
+        # Replace any placeholders in the URL using context (e.g., owner/repo/sha)
+        url = api_plan.get('url', '')
+        if '{' in url and context.get('github_config'):
+            cfg = context.get('github_config')
+            # Common keys to replace
+            for key in ['owner', 'repo', 'sha', 'pathPrefix', 'path_prefix', 'path']:
+                if key in cfg and '{' + key + '}' in url:
+                    url = url.replace('{' + key + '}', str(cfg.get(key)))
+            api_plan['url'] = url
+            # Warn if placeholders remain
+            if '{' in api_plan['url']:
+                logger.warning(f"API url still contains placeholders: {api_plan['url']}")
+
+        # If api_type is GitHub and we still don't have a full URL, construct it from github_config
+        if api_plan.get('api_type') == 'github' and (not api_plan.get('url') or '{' in api_plan.get('url', '')):
+            cfg = context.get('github_config', {})
+            if cfg.get('owner') and cfg.get('repo') and cfg.get('sha'):
+                constructed = f"https://api.github.com/repos/{cfg['owner']}/{cfg['repo']}/git/trees/{cfg['sha']}?recursive=1"
+                api_plan['url'] = constructed
+                logger.info(f"   → Constructed GitHub API URL: {constructed}")
         async with httpx.AsyncClient(timeout=30) as client:
             if api_plan.get('method', 'GET') == 'GET':
                 resp = await client.get(
