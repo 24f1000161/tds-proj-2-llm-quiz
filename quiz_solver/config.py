@@ -16,12 +16,12 @@ class LLMConfig(BaseModel):
     # Aipipe settings (OpenAI-compatible via aipipe.org)
     aipipe_token: Optional[str] = None
     aipipe_base_url: str = "https://aipipe.org/openai/v1"
-    aipipe_model: str = "gpt-4o-mini"
+    aipipe_model: str = "gpt-5-nano"
     aipipe_monthly_tokens: int = 1_000_000
     
     # Gemini settings (direct API - NOT through aipipe)
     gemini_api_key: Optional[str] = None
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.0-flash-exp"
     gemini_via_aipipe: bool = False  # Use direct Gemini API, not aipipe
     
     # Token thresholds
