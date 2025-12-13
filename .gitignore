@@ -25,3 +25,19 @@ Thumbs.db
 # Logs
 *.log
 logs/
+# Test files and temporary docs
+*.pyc
+__pycache__/
+.pytest_cache/
+*.log
+.llm-analysis-test-cases/
+test_*.py
+run_*_test.py
+verify_*.py
+test_server/
+ANALYSIS*.md
+IMPLEMENTATION_SUMMARY.md
+*.zip
+.vscode/
+.idea/
+
