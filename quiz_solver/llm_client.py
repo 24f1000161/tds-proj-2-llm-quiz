@@ -565,6 +565,90 @@ Generate ONLY 2-3 lines of Python code (no imports, no file reading):
         
         return code.strip()
     
+    async def classify_task_dynamically(self, question: str, context: dict) -> dict:
+        """
+        Use LLM to classify the task type and requirements.
+        This replaces brittle keyword matching with intelligent analysis.
+        
+        Args:
+            question: The raw question text
+            context: Available context (files, data, configs, etc.)
+            
+        Returns:
+            Classification dict with task_type, answer_format, personalization, etc.
+        """
+        
+        context_summary = []
+        if context.get('dominant_color'):
+            context_summary.append("- Image data available with dominant_color")
+        if context.get('github_config'):
+            context_summary.append("- GitHub API config available")
+        if context.get('audio_transcript'):
+            context_summary.append("- Audio transcript available")
+        if context.get('dataframe') is not None:
+            context_summary.append("- DataFrame available with data to analyze")
+        if context.get('logs_data'):
+            context_summary.append("- Logs data available")
+        
+        context_str = "\n".join(context_summary) if context_summary else "- No special data sources"
+        
+        classify_prompt = f"""Analyze this quiz question and classify the task type.
+
+QUESTION: {question}
+
+AVAILABLE CONTEXT:
+{context_str}
+
+Return ONLY valid JSON with this structure:
+{{
+    "task_type": "image_analysis|api_call|data_analysis|command_generation|audio_transcription|text_extraction|csv_to_json|chart_selection|other",
+    "answer_format": "hex_color|integer|float|json|command_string|text_phrase|csv_json|boolean|other",
+    "has_personalization": true/false,
+    "personalization_type": "email_length_mod_2|email_length_mod_3|email_length_mod_5|email_checksum|none",
+    "requires_api": true/false,
+    "api_type": "github|custom|none",
+    "requires_data_transformation": true/false,
+    "transformations": ["snake_case", "iso_dates", "integer_values", "sorted_by_id"],
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation of classification"
+}}
+
+Classification logic:
+- If question mentions image/color/rgb/hex → image_analysis
+- If question mentions API/GitHub/repos/trees → api_call  
+- If question mentions DataFrame/CSV/JSON transformation → data_analysis or csv_to_json
+- If question mentions shell/command/git/uv → command_generation
+- If question mentions audio/transcript/spoken → audio_transcription
+- If question mentions email length/offset/mod → has_personalization=true
+- Look for personalization patterns: "length of your email", "email mod", "offset"
+
+Answer:"""
+        
+        try:
+            response = await self.generate(classify_prompt, max_tokens=600, temperature=0.1)
+            response = response.strip()
+            
+            # Clean JSON markers
+            if response.startswith("```json"):
+                response = response[7:]
+            elif response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            
+            classification = json.loads(response.strip())
+            logger.info(f"✓ Task classified: {classification.get('task_type')} (confidence: {classification.get('confidence')})")
+            return classification
+            
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse classification JSON: {e}")
+            return {
+                "task_type": "other",
+                "answer_format": "other",
+                "has_personalization": False,
+                "confidence": 0.0
+            }
+    
     async def answer_from_context(self, context: str, question_text: str) -> str:
         """Answer a question directly from provided context (multi-modal fusion)."""
         
