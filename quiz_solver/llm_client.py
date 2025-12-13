@@ -482,6 +482,33 @@ Return JSON (no other text):
             logger.warning(f"Failed to parse LLM response as JSON: {e}")
             return {}
     
+    async def generate_complete_command(self, question: str) -> str:
+        """
+        Generate COMPLETE command/answer in ONE LLM call (from QUICK_FIX_CHECKLIST.md FIX #2).
+        Includes: URL extraction, command building, and formatting.
+        """
+        prompt = f"""Based on this question, generate the EXACT answer or command to submit.
+
+Question: {question}
+
+Requirements:
+- For commands: Include all necessary flags and headers
+- For text answers: Provide the exact text requested  
+- For single letters: Respond with just that letter
+- Return ONLY the answer, no explanation
+- Answer must be ready to submit as-is
+
+Answer:"""
+
+        response = await self.generate(
+            prompt,
+            max_tokens=200,
+            temperature=0.1,
+            timeout=20  # Shorter timeout for simple responses
+        )
+        
+        return response.strip()
+    
     async def classify_task(self, question_text: str) -> dict[str, Any]:
         """Classify a task using LLM."""
         
@@ -623,13 +650,14 @@ Return ONLY valid JSON:
     "answer_format": "hex_color|integer|float|json|command_string|text_phrase|boolean|other",
     "has_personalization": true/false,
     "personalization_type": "email_length_mod_2|email_length_mod_3|email_length_mod_5|none",
+    "api_type": "github|custom|none",
     "confidence": 0.0-1.0,
     "reasoning": "1-2 words"
 }}
 
 Rules:
 - Image/color → image_analysis
-- API/GitHub → api_call
+- API/GitHub → api_call, api_type="github"
 - DataFrame/CSV/JSON/logs → data_analysis
 - Command/shell/git/uv → command_generation
 - Email length/mod/offset → has_personalization=true
