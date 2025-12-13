@@ -333,7 +333,6 @@ SOLUTION STRATEGY: {analysis.get('solution_strategy', '')}
 {"USER EMAIL: " + session.email if analysis.get('personalization', {}).get('uses_email') else ""}
 
 Return ONLY the command string (no explanations, no code blocks).
-Do NOT quote URLs unless they contain spaces.
 If multiple commands are needed, separate them with newlines.
 Include all required flags and arguments exactly as specified."""
 
@@ -401,26 +400,7 @@ Return ONLY valid JSON:
         if api_plan.get('api_type') == 'none':
             return None
         
-        # Replace any placeholders in the URL using context (e.g., owner/repo/sha)
-        url = api_plan.get('url', '')
-        if '{' in url and context.get('github_config'):
-            cfg = context.get('github_config')
-            # Common keys to replace
-            for key in ['owner', 'repo', 'sha', 'pathPrefix', 'path_prefix', 'path']:
-                if key in cfg and '{' + key + '}' in url:
-                    url = url.replace('{' + key + '}', str(cfg.get(key)))
-            api_plan['url'] = url
-            # Warn if placeholders remain
-            if '{' in api_plan['url']:
-                logger.warning(f"API url still contains placeholders: {api_plan['url']}")
-
-        # If api_type is GitHub and we still don't have a full URL, construct it from github_config
-        if api_plan.get('api_type') == 'github' and (not api_plan.get('url') or '{' in api_plan.get('url', '')):
-            cfg = context.get('github_config', {})
-            if cfg.get('owner') and cfg.get('repo') and cfg.get('sha'):
-                constructed = f"https://api.github.com/repos/{cfg['owner']}/{cfg['repo']}/git/trees/{cfg['sha']}?recursive=1"
-                api_plan['url'] = constructed
-                logger.info(f"   → Constructed GitHub API URL: {constructed}")
+        # Execute the API call
         async with httpx.AsyncClient(timeout=30) as client:
             if api_plan.get('method', 'GET') == 'GET':
                 resp = await client.get(
@@ -680,45 +660,6 @@ async def format_answer_dynamically(
     
     if expected_format == 'json':
         if isinstance(answer, str):
-            # Try to find JSON array or object in the string
-            answer = answer.strip()
-            # If it's wrapped in code blocks, strip them
-            if answer.startswith("```"):
-                lines = answer.split("\n")
-                if lines[0].strip().startswith("```"):
-                    answer = "\n".join(lines[1:])
-                if answer.strip().endswith("```"):
-                    answer = answer.strip()[:-3]
-                answer = answer.strip()
-            
-            # Try to parse as JSON first
-            try:
-                parsed = json.loads(answer)
-                return json.dumps(parsed)
-            except:
-                # Try ast.literal_eval for Python-style strings (single quotes)
-                try:
-                    import ast
-                    parsed = ast.literal_eval(answer)
-                    return json.dumps(parsed)
-                except:
-                    pass
-
-            # If it looks like JSON, return it. If it has extra text, try to extract.
-            import re
-            json_match = re.search(r'(\{.*\}|\[.*\])', answer, re.DOTALL)
-            if json_match:
-                # Try to parse the extracted part
-                try:
-                    parsed = json.loads(json_match.group(1))
-                    return json.dumps(parsed)
-                except:
-                    try:
-                        import ast
-                        parsed = ast.literal_eval(json_match.group(1))
-                        return json.dumps(parsed)
-                    except:
-                        return json_match.group(1) # Return as is if parsing fails
             return answer
         return json.dumps(answer)
     
@@ -1182,136 +1123,65 @@ async def solve_with_llm(
     session: Any
 ) -> Any:
     """
-    Main entry point for LLM-driven question solving.
+    NEW ARCHITECTURE: Generic task classification + handler routing.
     
-    1. Analyze the question deeply
-    2. Route to appropriate handler based on task type
-    3. Format and return answer
+    This replaces 500+ lines of hardcoded if/elif chains with:
+    1. LLM classifies task type dynamically
+    2. Routes to appropriate generic handler
+    3. Handler solves ANY question of that type
     
-    Handles ALL TDS course topics:
-    - Data Analysis (pandas, SQL, DuckDB)
-    - Web Scraping (CSS selectors, BeautifulSoup)
-    - API Calls (GitHub, REST APIs)
-    - Commands (git, uv, curl, wget, bash)
-    - Network Analysis (NetworkX, graphs)
-    - Geospatial (Haversine, coordinates)
-    - Image Analysis (dominant color)
-    - Audio Transcription
-    - LLM Tasks (prompt injection, function calling)
+    No more keyword matching. No more brittle patterns.
+    Works for ALL question variations, not just memorized ones.
     """
     
-    logger.info("   🧠 Analyzing question with LLM...")
+    logger.info("   🧠 Step 1: Dynamic Task Classification...")
     
-    # Step 1: Deep question analysis
-    analysis = await analyze_question_deeply(llm_client, question, context)
+    # Add DataFrame to context for classification
+    if df is not None:
+        context['dataframe'] = df
     
-    task_type = analysis.get('task_type', 'llm_task')
-    logger.info(f"   📋 Task type: {task_type}")
-    logger.info(f"   📋 Strategy: {analysis.get('solution_strategy', 'N/A')[:100]}")
+    # Use new classification method
+    classification = await llm_client.classify_task_dynamically(question, context)
     
-    # Step 2: Route to appropriate handler
-    answer = None
+    task_type = classification.get('task_type', 'other')
+    logger.info(f"   ✓ Task: {task_type} (confidence: {classification.get('confidence', 'N/A')})")
+    logger.info(f"   ✓ Answer format: {classification.get('answer_format')}")
+    logger.info(f"   ✓ Has personalization: {classification.get('has_personalization')}")
     
-    # Check for intro/start page
-    if task_type == 'intro_page':
-        answer = analysis.get('fallback_answer', 'start')
-        logger.info(f"   ✓ Intro page detected, using: {answer}")
+    # Step 2: Route to generic handler
+    from .task_handlers import TASK_HANDLERS
     
-    # Data Analysis (pandas/SQL)
-    elif task_type == 'data_analysis' and df is not None:
-        # Try SQL first for complex queries
-        if any(kw in question.lower() for kw in ['sql', 'query', 'select', 'where', 'group by', 'having']):
-            answer = await llm_driven_sql_analysis(llm_client, df, question, analysis)
-        
-        # Fall back to pandas
-        if answer is None:
-            answer = await llm_driven_data_analysis(
-                llm_client, df, context, question, analysis, session
-            )
+    handler = TASK_HANDLERS.get(task_type, TASK_HANDLERS['other'])
+    logger.info(f"   🎯 Routing to: {handler.__name__}")
     
-    # Command generation (git, uv, curl, bash)
-    elif task_type == 'command_generation':
-        answer = await llm_driven_command_generation(
-            llm_client, question, analysis, session
+    try:
+        answer = await handler(
+            question=question,
+            context=context,
+            classification=classification,
+            session=session
+        )
+    except Exception as e:
+        logger.error(f"   ❌ Handler {handler.__name__} failed: {e}")
+        # Fallback to generic LLM answer
+        answer = await TASK_HANDLERS['other'](
+            question=question,
+            context=context,
+            classification=classification,
+            session=session
         )
     
-    # API calls
-    elif task_type == 'api_call':
-        answer = await llm_driven_api_call(
-            llm_client, question, analysis, context, session
-        )
-    
-    # Image analysis
-    elif task_type == 'image_analysis':
-        answer = await llm_driven_image_analysis(
-            llm_client, question, analysis, context
-        )
-    
-    # Audio transcription
-    elif task_type == 'audio_transcription':
-        answer = context.get('audio_transcript', '').strip()
-        if answer:
-            logger.info(f"   ✓ Using audio transcript: {answer[:50]}")
-    
-    # Network/Graph analysis
-    elif task_type == 'network_analysis':
-        answer = await llm_driven_network_analysis(
-            llm_client, question, analysis, context, session
-        )
-    
-    # Geospatial calculations
-    elif task_type == 'geospatial':
-        answer = await llm_driven_geospatial(
-            llm_client, question, analysis, context
-        )
-    
-    # Web scraping with CSS selectors
-    elif task_type == 'web_scrape':
-        answer = await llm_driven_css_scraping(
-            llm_client, question, analysis, context
-        )
-        if answer is None:
-            answer = await llm_driven_text_extraction(
-                llm_client, question, analysis, context
-            )
-    
-    # LLM-specific tasks
-    elif task_type == 'llm_task':
-        answer = await llm_driven_llm_task(
-            llm_client, question, analysis, context
-        )
-    
-    # Text extraction (PDF, webpage, etc.)
-    elif task_type == 'text_extraction':
-        answer = await llm_driven_text_extraction(
-            llm_client, question, analysis, context
-        )
-    
-    # JSON transformation
-    elif task_type == 'json_transform' and df is not None:
-        answer = await llm_driven_json_transformation(
-            llm_client, df, question, analysis
-        )
-    
-    # Visualization (chart generation as base64 PNG)
-    elif task_type == 'visualization':
-        answer = await llm_driven_visualization(
-            llm_client, df, question, analysis, context
-        )
-    
-    # Fallback: Use LLM directly with all context
-    if answer is None:
-        logger.info("   🤖 Using LLM fallback...")
-        answer = await llm_driven_text_extraction(
-            llm_client, question, analysis, context
-        )
-    
-    # Step 3: Format answer
+    # Step 3: Format answer dynamically
     if answer is not None:
+        # Check if deep analysis is needed for complex formatting
+        old_analysis = await analyze_question_deeply(llm_client, question, context)
+        
         formatted = await format_answer_dynamically(
-            llm_client, answer, question, analysis
+            llm_client, answer, question, old_analysis
         )
+        logger.info(f"   ✓ Final answer: {str(formatted)[:100]}")
         return formatted
     
     # Ultimate fallback
-    return analysis.get('fallback_answer', 'start')
+    logger.warning("   ⚠️  No answer generated, using fallback")
+    return "start"
