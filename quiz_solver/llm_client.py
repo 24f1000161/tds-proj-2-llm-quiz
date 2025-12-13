@@ -98,9 +98,13 @@ class LLMClient:
         prompt: str,
         max_tokens: int = 500,
         temperature: float = 0.2,
-        json_response: bool = False
+        json_response: bool = False,
+        timeout: int = 30  # FIX #4: Add timeout parameter
     ) -> str:
-        """Generate a response from the LLM with retry logic."""
+        """Generate a response from the LLM with retry logic and timeout.
+        
+        FIX #4: Enforces timeout to prevent hanging LLM calls.
+        """
         import asyncio
         
         model_choice = self._select_model()
@@ -108,10 +112,23 @@ class LLMClient:
         
         for attempt in range(max_retries):
             try:
+                # FIX #4: Wrap LLM call in asyncio.wait_for() to enforce timeout
                 if model_choice == "aipipe":
-                    return await self._generate_aipipe(prompt, max_tokens, temperature, json_response)
+                    response = await asyncio.wait_for(
+                        self._generate_aipipe(prompt, max_tokens, temperature, json_response),
+                        timeout=timeout
+                    )
                 else:
-                    return await self._generate_gemini(prompt, max_tokens, temperature)
+                    response = await asyncio.wait_for(
+                        self._generate_gemini(prompt, max_tokens, temperature),
+                        timeout=timeout
+                    )
+                return response
+            except asyncio.TimeoutError:
+                logger.warning(f"LLM call timed out after {timeout}s (attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    continue
+                raise RuntimeError(f"LLM call timed out after {max_retries} attempts")
             except Exception as e:
                 error_str = str(e)
                 
@@ -625,7 +642,8 @@ Classification logic:
 Answer:"""
         
         try:
-            response = await self.generate(classify_prompt, max_tokens=600, temperature=0.1)
+            # FIX #4: Use timeout=40 for classification calls
+            response = await self.generate(classify_prompt, max_tokens=600, temperature=0.1, timeout=40)
             response = response.strip()
             
             # Clean JSON markers

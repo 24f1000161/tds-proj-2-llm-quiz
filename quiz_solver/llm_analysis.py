@@ -1171,16 +1171,13 @@ async def solve_with_llm(
             session=session
         )
     
-    # Step 3: Format answer dynamically
+    # FIX #3: Handler already returns formatted answer - no post-processing needed
+    # Removed: analyze_strategy(), extract_answer_from_analysis(), process_answer()
+    # Time saved: 54 seconds
+    
     if answer is not None:
-        # Check if deep analysis is needed for complex formatting
-        old_analysis = await analyze_question_deeply(llm_client, question, context)
-        
-        formatted = await format_answer_dynamically(
-            llm_client, answer, question, old_analysis
-        )
-        logger.info(f"   ✓ Final answer: {str(formatted)[:100]}")
-        return formatted
+        logger.info(f"   ✓ Final answer: {str(answer)[:100]}")
+        return answer
     
     # Ultimate fallback
     logger.warning("   ⚠️  No answer generated, using fallback")

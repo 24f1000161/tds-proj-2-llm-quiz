@@ -341,6 +341,45 @@ async def handle_command_task(
     """
     Generic command generation handler.
     Works for: git commands, shell commands, uv commands, etc.
+    
+    OPTIMIZED: Single LLM call, no duplicate classification.
+    """
+    logger.info("⌨️  Handling command generation task")
+    
+    # FIX #1 & #2: Use optimized single-call command generation
+    # Don't re-classify (already done in pipeline)
+    try:
+        command = await llm_client.generate_complete_command(question, session)
+        
+        if not command:
+            logger.warning("   ⚠️  Empty command generated")
+            return None
+        
+        logger.info(f"   ✓ Command ready: {command[:100]}")
+        return command
+        
+    except Exception as e:
+        logger.error(f"   ❌ Command generation failed: {e}")
+        return None
+
+
+# OLD IMPLEMENTATION REMOVED - was doing duplicate work:
+# - Re-classification (already done)
+# - Separate URL extraction
+# - Separate command building  
+# - Separate validation
+# Now: Single optimized call
+
+
+async def _handle_command_task_old_slow(
+    question: str,
+    context: dict,
+    classification: dict,
+    session: Any
+) -> Optional[str]:
+    """
+    OLD SLOW VERSION - DEPRECATED
+    Kept for reference only. Do not use.
     """
     logger.info("⌨️  Handling command generation task")
     
