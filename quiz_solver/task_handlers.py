@@ -93,7 +93,7 @@ async def handle_api_task(
             api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{sha}?recursive=1"
             
             try:
-                async with httpx.AsyncClient(timeout=30) as client:
+                async with httpx.AsyncClient(timeout=60.0) as client:
                     resp = await client.get(api_url)
                     resp.raise_for_status()
                     data = resp.json()
@@ -142,7 +142,7 @@ Return ONLY valid JSON:
 }}"""
     
     try:
-        response = await llm_client.generate(api_prompt, max_tokens=300, temperature=0.1)
+        response = await llm_client.generate(api_prompt, max_tokens=300, temperature=0.1, timeout=60)
         response = response.strip()
         
         # Clean JSON markers
@@ -153,7 +153,7 @@ Return ONLY valid JSON:
         api_spec = json.loads(response)
         
         # Execute API call
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             if api_spec.get('method', 'GET') == 'GET':
                 resp = await client.get(
                     api_spec['url'],
@@ -177,8 +177,11 @@ API RESPONSE (truncated): {json.dumps(api_data)[:2000]}
 
 Return ONLY the final answer value."""
         
-        answer = await llm_client.generate(extract_prompt, max_tokens=200, temperature=0.1)
-        return answer.strip()
+        answer = await llm_client.generate(extract_prompt, max_tokens=200, temperature=0.1, timeout=60)
+        answer = answer.strip()
+        
+        logger.info(f"   ✓ API answer: {answer[:100]}")
+        return answer
         
     except Exception as e:
         logger.error(f"   ❌ API call failed: {e}")
@@ -224,6 +227,23 @@ async def handle_data_analysis_task(
     from .data_sourcing import get_dataframe_info
     df_info = get_dataframe_info(df)
     
+    # Include ONLY available context data in the prompt (don't mention variables that don't exist)
+    context_info = []
+    available_vars = []
+    
+    if 'json_data' in context and context.get('json_data'):
+        import json
+        context_info.append(f"JSON data in 'json_data': {json.dumps(context['json_data'])[:500]}")
+        available_vars.append("json_data")
+    
+    if 'dict_data' in context and context.get('dict_data'):
+        import json
+        context_info.append(f"Dict data in 'dict_data': {json.dumps(context['dict_data'])[:500]}")
+        available_vars.append("dict_data")
+    
+    vars_str = ", ".join(available_vars) if available_vars else "none"
+    context_str = "\n".join(context_info) if context_info else "No additional JSON/dict data"
+    
     analysis_prompt = f"""Generate Python pandas code to answer this question.
 
 QUESTION: {question}
@@ -235,7 +255,17 @@ DATAFRAME INFO:
 - Sample:
 {df_info.get('sample', '')}
 
-Generate ONLY Python code (no imports, df is already loaded):
+ADDITIONAL DATA AVAILABLE: {vars_str}
+{context_str}
+
+CRITICAL INSTRUCTIONS: 
+- Use ONLY the df DataFrame (already loaded)
+- Additional variables AVAILABLE in namespace: {vars_str}
+- DO NOT reference variables named 'json_data' unless it's explicitly listed above
+- DO NOT try to read files from disk
+- If you need dict/JSON data, use ONLY the variable names listed above
+
+Generate ONLY Python code (no imports needed):
 - Store final answer in variable 'answer'
 - Handle all requirements from question
 - For numeric answers, ensure correct data type (int vs float)
@@ -243,7 +273,7 @@ Generate ONLY Python code (no imports, df is already loaded):
 Code:"""
     
     try:
-        code = await llm_client.generate(analysis_prompt, max_tokens=500, temperature=0.1)
+        code = await llm_client.generate(analysis_prompt, max_tokens=500, temperature=0.1, timeout=60)
         code = code.strip()
         
         # Clean code markers
@@ -256,7 +286,7 @@ Code:"""
         
         # Execute code
         from .analysis import execute_analysis_code
-        answer, output, error = await execute_analysis_code(code.strip(), df)
+        answer, output, error = await execute_analysis_code(code.strip(), df, context)
         
         if error:
             logger.error(f"   ❌ Analysis code error: {error}")
@@ -269,7 +299,11 @@ Code:"""
                 classification.get("personalization_type")
             )
             logger.info(f"   ✓ Applying personalization offset: {offset}")
-            answer = int(answer) + offset
+            # Preserve float precision - only convert to int if answer was already int
+            if isinstance(answer, int):
+                answer = answer + offset
+            else:
+                answer = float(answer) + offset
         
         logger.info(f"   ✓ Analysis result: {answer}")
         return answer
@@ -322,7 +356,7 @@ Generate ONLY Python code that:
 Code:"""
     
     try:
-        code = await llm_client.generate(transform_prompt, max_tokens=500, temperature=0.1)
+        code = await llm_client.generate(transform_prompt, max_tokens=500, temperature=0.1, timeout=60)
         code = code.strip()
         
         # Clean markers
@@ -335,12 +369,17 @@ Code:"""
         
         # Execute transformation
         from .analysis import execute_analysis_code
-        answer, output, error = await execute_analysis_code(code.strip(), df)
+        answer, output, error = await execute_analysis_code(code.strip(), df, context)
         
         if error:
             logger.error(f"   ❌ Transformation error: {error}")
             # Fallback: basic transformation
             answer = df.to_json(orient='records')
+        
+        # Convert to JSON string if it's a Python object
+        import json
+        if isinstance(answer, (list, dict)):
+            answer = json.dumps(answer, ensure_ascii=False)
         
         logger.info(f"   ✓ JSON transformation complete")
         return answer
@@ -358,23 +397,77 @@ async def handle_command_task(
 ) -> Optional[str]:
     """
     Generic command generation handler.
-    Works for: git commands, shell commands, uv commands, etc.
+    Works for: git commands, shell commands, uv commands, JSON structures, etc.
     
     OPTIMIZED: Single LLM call, no duplicate classification.
     """
     logger.info("⌨️  Handling command generation task")
     
-    # FIX #1 & #2: Use optimized single-call command generation
-    # Don't re-classify (already done in pipeline)
+    # Check if answer format is JSON - needs different handling
+    answer_format = classification.get('answer_format', 'command_string')
+    
     try:
-        command = await llm_client.generate_complete_command(question, session)
-        
-        if not command:
-            logger.warning("   ⚠️  Empty command generated")
-            return None
-        
-        logger.info(f"   ✓ Command ready: {command[:100]}")
-        return command
+        if answer_format == 'json':
+            # This is actually a JSON structure request, not a command
+            # Build JSON generation prompt
+            import json
+            context_str = json.dumps(context) if context else "No additional context"
+            
+            # Extract what type of JSON structure is requested
+            question_lower = question.lower()
+            
+            # Check if it's asking for an array specifically
+            if 'array' in question_lower or 'ordered plan' in question_lower or 'list of' in question_lower:
+                structure_hint = "Return ONLY a JSON array [...], not an object {...}"
+            else:
+                structure_hint = "Follow the exact structure requested"
+            
+            json_prompt = f"""Generate a JSON response for this request.
+
+QUESTION: {question}
+
+CONTEXT: {context_str}
+
+Instructions:
+- {structure_hint}
+- Use proper JSON syntax with double quotes
+- Ensure all required fields are included
+- Return ONLY the JSON, no explanatory text
+
+JSON:"""
+            
+            response = await llm_client.generate(json_prompt, max_tokens=600, temperature=0.1, timeout=60)
+            response = response.strip()
+            
+            # Clean JSON markers
+            if response.startswith('```json'):
+                response = response[7:]
+            elif response.startswith('```'):
+                response = response[3:]
+            if response.endswith('```'):
+                response = response[:-3]
+            
+            response = response.strip()
+            
+            # Validate it's proper JSON
+            try:
+                parsed = json.loads(response)
+                logger.info(f"   ✓ Generated JSON: {json.dumps(parsed)[:200]}")
+                return parsed  # Return as-is (LLM should have generated correct structure)
+            except json.JSONDecodeError as e:
+                logger.error(f"   ❌ Invalid JSON generated: {e}")
+                return response  # Return as string, let format_answer handle it
+        else:
+            # Regular command generation (git, shell, etc.)
+            prompt = f"Generate a complete command for: {question}\n\nContext: {context}"
+            command = await llm_client.generate_complete_command(prompt)
+            
+            if not command:
+                logger.warning("   ⚠️  Empty command generated")
+                return None
+            
+            logger.info(f"   ✓ Command ready: {command[:100]}")
+            return command
         
     except Exception as e:
         logger.error(f"   ❌ Command generation failed: {e}")
@@ -416,7 +509,7 @@ Instructions:
 Command:"""
     
     try:
-        command = await llm_client.generate(command_prompt, max_tokens=300, temperature=0.1)
+        command = await llm_client.generate(command_prompt, max_tokens=300, temperature=0.1, timeout=60)
         command = command.strip()
         
         # Validate command
@@ -427,12 +520,12 @@ COMMAND: {command}
 
 Return ONLY: "yes" or "no" with brief reason if no."""
         
-        validation = await llm_client.generate(validation_prompt, max_tokens=50, temperature=0.1)
+        validation = await llm_client.generate(validation_prompt, max_tokens=50, temperature=0.1, timeout=30)
         
         if "no" in validation.lower():
             logger.warning(f"   ⚠️  Command validation failed: {validation}")
             # Regenerate
-            command = await llm_client.generate(command_prompt, max_tokens=300, temperature=0.1)
+            command = await llm_client.generate(command_prompt, max_tokens=300, temperature=0.1, timeout=60)
             command = command.strip()
         
         logger.info(f"   ✓ Generated command: {command}")
@@ -475,7 +568,7 @@ Instructions:
 Answer:"""
     
     try:
-        answer = await llm_client.generate(process_prompt, max_tokens=200, temperature=0.1)
+        answer = await llm_client.generate(process_prompt, max_tokens=200, temperature=0.1, timeout=60)
         answer = answer.strip()
         
         logger.info(f"   ✓ Processed transcript answer: {answer}")
@@ -506,7 +599,7 @@ QUESTION: {question}
 Return ONLY the extracted value, nothing else."""
     
     try:
-        answer = await llm_client.generate(extract_prompt, max_tokens=100, temperature=0.1)
+        answer = await llm_client.generate(extract_prompt, max_tokens=100, temperature=0.1, timeout=60)
         answer = answer.strip()
         
         logger.info(f"   ✓ Extracted: {answer}")

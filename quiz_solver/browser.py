@@ -137,18 +137,19 @@ async def wait_for_spa_rendering(page: Page, session: Any) -> None:
             except Exception:
                 pass
     
-    # Strategy 3: Wait for content in #result div
+    # Strategy 3: Wait for content in #result div (short timeout - most quizzes don't have this)
     try:
         await page.wait_for_function(
             """() => {
                 const element = document.querySelector("#result");
                 return element && element.textContent.trim().length > 0;
             }""",
-            timeout=5000
+            timeout=1000  # Reduced from 5000ms to 1000ms - most quizzes don't need this
         )
         logger.info("Content detected in #result div")
     except Exception:
-        logger.warning("Timeout waiting for #result content, continuing anyway")
+        # This is expected for most quizzes - continue normally
+        pass
     
     # Skip waiting for networkidle - it's too slow
     # await page.wait_for_load_state("networkidle")

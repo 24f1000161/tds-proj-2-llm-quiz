@@ -118,10 +118,13 @@ async def solve_quiz_pipeline(
     secret: str,
     initial_url: str,
     deadline: float
-) -> None:
+) -> dict:
     """
     Main pipeline orchestrating the entire quiz solving process.
     Handles multiple chained quizzes within 3-minute deadline.
+    
+    Returns:
+        dict with keys: quizzes_solved, total_time, success
     """
     
     # Initialize session
@@ -225,27 +228,12 @@ async def solve_quiz_pipeline(
                 if question_components.relative_submit_url:
                     logger.info(f"   • Relative submit URL: {question_components.relative_submit_url}")
                 
-                # ==================== STAGE 4: LLM CLASSIFICATION ====================
+                # ==================== STAGE 4: LLM CLASSIFICATION (SKIPPED) ====================
+                # PERFORMANCE FIX: Skip redundant classification - Stage 7 does this dynamically
+                # Saves 25-40 seconds per quiz
                 logger.info("")
-                logger.info("🤖 STAGE 4: LLM Task Classification")
-                classification = {}
-                
-                try:
-                    classification = await llm_client.classify_task(raw_question)
-                    logger.info(f"   • Task type: {classification.get('task_type', 'unknown')}")
-                    logger.info(f"   • Complexity: {classification.get('complexity', 'unknown')}")
-                    logger.info(f"   • Answer type: {classification.get('expected_answer_type', 'unknown')}")
-                    
-                    # Check if LLM identifies URLs to scrape that we missed
-                    llm_data_sources = classification.get('data_sources', [])
-                    if llm_data_sources:
-                        logger.info(f"   • LLM identified sources: {llm_data_sources}")
-                        for src in llm_data_sources:
-                            if src not in question_components.data_sources:
-                                question_components.data_sources.append(src)
-                except Exception as e:
-                    logger.warning(f"   ⚠️ LLM classification failed: {e}")
-                    logger.info("   → Continuing with rule-based processing...")
+                logger.info("🤖 STAGE 4: LLM Task Classification (SKIPPED - using dynamic classification in Stage 7)")
+                classification = {}  # Will be done in Stage 7
                 
                 # ==================== STAGE 5: DATA SOURCING ====================
                 logger.info("")
@@ -360,7 +348,14 @@ async def solve_quiz_pipeline(
                                 else:
                                     logger.info(f"     → ZIP: {len(data.get('logs_data', []))} log entries")
                             else:
-                                merged_context[f'data_{len(merged_context)}'] = data
+                                # Store dict/JSON data for code execution
+                                if not merged_context.get('dict_data'):
+                                    merged_context['dict_data'] = data
+                                else:
+                                    # Multiple dicts - store in a list
+                                    if not isinstance(merged_context['dict_data'], list):
+                                        merged_context['dict_data'] = [merged_context['dict_data']]
+                                    merged_context['dict_data'].append(data)
                                 logger.info(f"     → Dict with keys: {list(data.keys())[:5]}")
                         elif isinstance(data, pd.DataFrame):
                             merged_context['dataframe'] = data
@@ -532,14 +527,30 @@ async def solve_quiz_pipeline(
             "quizzes_solved": quiz_count,
             "total_time": time.time() - session.start_time
         })
+        
+        # Return results
+        return {
+            "quizzes_solved": quiz_count,
+            "total_time": time.time() - session.start_time,
+            "success": quiz_count > 0
+        }
     
     except Exception as e:
         logger.error(f"❌ Pipeline error: {e}", exc_info=True)
         log_step(session, "pipeline_error", {"error": str(e)})
+        
+        # Return failure result
+        return {
+            "quizzes_solved": 0,
+            "total_time": time.time() - session.start_time if 'session' in locals() else 0,
+            "success": False,
+            "error": str(e)
+        }
     
     finally:
         logger.info("🔒 Closing browser...")
-        await browser_manager.close()
+        if 'browser_manager' in locals():
+            await browser_manager.close()
         logger.info("   ✓ Browser closed")
 
 

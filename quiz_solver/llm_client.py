@@ -482,29 +482,17 @@ Return JSON (no other text):
             logger.warning(f"Failed to parse LLM response as JSON: {e}")
             return {}
     
-    async def generate_complete_command(self, question: str) -> str:
+    async def generate_complete_command(self, prompt: str) -> str:
         """
         Generate COMPLETE command/answer in ONE LLM call (from QUICK_FIX_CHECKLIST.md FIX #2).
         Includes: URL extraction, command building, and formatting.
+        Accepts a pre-built prompt with question and context.
         """
-        prompt = f"""Based on this question, generate the EXACT answer or command to submit.
-
-Question: {question}
-
-Requirements:
-- For commands: Include all necessary flags and headers
-- For text answers: Provide the exact text requested  
-- For single letters: Respond with just that letter
-- Return ONLY the answer, no explanation
-- Answer must be ready to submit as-is
-
-Answer:"""
-
         response = await self.generate(
             prompt,
-            max_tokens=200,
+            max_tokens=500,
             temperature=0.1,
-            timeout=20  # Shorter timeout for simple responses
+            timeout=30  # Increased timeout for complex commands/YAML
         )
         
         return response.strip()
@@ -538,8 +526,8 @@ IMPORTANT: If the question mentions scraping a URL or getting data from a page, 
 Look for patterns like "Scrape <url>", "Get data from <url>", "Visit <url>", etc."""
         
         try:
-            # FIX #3: Use timeout=40 for classification to prevent timeouts
-            response = await self.generate(classify_prompt, max_tokens=600, json_response=True, timeout=40)
+            # FIX #3: Use timeout=60 for classification to prevent timeouts on complex questions
+            response = await self.generate(classify_prompt, max_tokens=600, json_response=True, timeout=60)
             response = response.strip()
             if response.startswith("```"):
                 lines = response.split("\n")
@@ -657,16 +645,22 @@ Return ONLY valid JSON:
 
 Rules:
 - Image/color → image_analysis
-- API/GitHub → api_call, api_type="github"
-- DataFrame/CSV/JSON/logs → data_analysis
-- Command/shell/git/uv → command_generation
-- Email length/mod/offset → has_personalization=true
+- Fetching data from API endpoint → api_call, api_type="github" if GitHub
+- Calculate/filter/analyze existing data → data_analysis (NOT api_call)
+- YAML/command/shell/git/uv → command_generation
+- "anything you want" or demo/intro → text_extraction (just submit simple text)
+- has_personalization=true ONLY if question explicitly uses email in calculation (e.g., "sum ASCII values of your email", "email length mod 5")
+- Data merge/transformation tasks (CSV+JSON, calculations on data files) are NOT personalized
+
+IMPORTANT: 
+- If question asks to "calculate", "find", "pick", "filter" from constraints/data → data_analysis
+- If answer can be "anything" or is demo/test → text_extraction
 
 Answer:"""
         
         try:
-            # FIX #4: Use timeout=40 for classification calls
-            response = await self.generate(classify_prompt, max_tokens=600, temperature=0.1, timeout=40)
+            # FIX #4: Use timeout=60 for classification calls to prevent timeouts
+            response = await self.generate(classify_prompt, max_tokens=600, temperature=0.1, timeout=60)
             response = response.strip()
             
             # Clean JSON markers

@@ -167,11 +167,29 @@ def format_answer(answer: Any, expected_format: AnswerFormat) -> Any:
         
         elif expected_format == AnswerFormat.JSON:
             import json
+            import re
+            
             if isinstance(answer, str):
+                # Try to parse as-is first
                 try:
-                    return json.loads(answer_str)
-                except json.JSONDecodeError:
+                    json.loads(answer_str)
                     return answer_str
+                except json.JSONDecodeError:
+                    # Try to extract JSON from text (e.g., "url = ...\n{...}")
+                    # Look for JSON object or array
+                    json_match = re.search(r'(\{.*\}|\[.*\])', answer_str, re.DOTALL)
+                    if json_match:
+                        try:
+                            json_str = json_match.group(1)
+                            json.loads(json_str)  # Validate
+                            return json_str
+                        except json.JSONDecodeError:
+                            pass
+                    # If extraction failed, return as-is (server will reject but at least we tried)
+                    return answer_str
+            # If it's a dict/list, convert to JSON string for submission
+            elif isinstance(answer, (dict, list)):
+                return json.dumps(answer)
             return answer
         
         elif expected_format == AnswerFormat.BASE64_IMAGE:

@@ -11,10 +11,11 @@ import numpy as np
 from .logging_utils import logger
 
 
-async def execute_analysis_code(code: str, df: pd.DataFrame) -> tuple[Any, str, Optional[str]]:
+async def execute_analysis_code(code: str, df: pd.DataFrame, context: dict = None) -> tuple[Any, str, Optional[str]]:
     """Execute generated pandas code safely.
     
     FIX #2: Added missing imports (requests, re, datetime).
+    Now also accepts context dict to pass json_data/dict_data to code.
     """
     
     # FIX #2: Import additional modules that LLM code might need
@@ -34,6 +35,13 @@ async def execute_analysis_code(code: str, df: pd.DataFrame) -> tuple[Any, str, 
         "json": json,  # FIX #2
         "answer": None
     }
+    
+    # Add context data if available
+    if context:
+        if 'json_data' in context:
+            namespace['json_data'] = context['json_data']
+        if 'dict_data' in context:
+            namespace['dict_data'] = context['dict_data']
     
     # Capture output
     old_stdout = sys.stdout
