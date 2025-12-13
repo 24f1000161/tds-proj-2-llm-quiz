@@ -125,7 +125,8 @@ async def handle_api_task(
                 
             except Exception as e:
                 logger.error(f"   ❌ GitHub API call failed: {e}")
-                return None
+                # FIX #4: Raise exception instead of returning None
+                raise Exception(f"GitHub API call failed: {e}") from e
     
     # Generic API call using LLM guidance
     api_prompt = f"""Parse this question to extract API call details.
@@ -193,14 +194,31 @@ async def handle_data_analysis_task(
     """
     Generic data analysis handler.
     Works for: aggregations, filtering, transformations, statistical analysis, etc.
+    
+    FIX #4 & FIX #5: Create DataFrame from logs_data if needed, fail explicitly instead of 'start'.
     """
     logger.info("📊 Handling data analysis task")
     
     df = context.get('dataframe')
     
+    # FIX #5: Try to create DataFrame from logs_data if missing
+    if df is None and 'logs_data' in context and context['logs_data']:
+        try:
+            df = pd.DataFrame(context['logs_data'])
+            logger.info(f"   ✓ Created DataFrame from logs_data: {df.shape}")
+            context['dataframe'] = df
+        except Exception as e:
+            logger.error(f"   ❌ Failed to create DataFrame from logs_data: {e}")
+    
+    # FIX #4: Fail explicitly instead of using 'start' fallback or returning None
     if df is None or (isinstance(df, pd.DataFrame) and df.empty):
-        logger.warning("   ⚠️  No DataFrame available for analysis")
-        return None
+        available_keys = [k for k in context.keys() if context.get(k)]
+        logger.error(f"   ❌ No DataFrame available. Available data: {available_keys}")
+        # FIX #4: Don't return None or "start" - raise exception with helpful context
+        raise Exception(
+            f"No DataFrame available for data analysis. "
+            f"Data sources available: {available_keys}"
+        )
     
     # Generate analysis code using LLM
     from .data_sourcing import get_dataframe_info

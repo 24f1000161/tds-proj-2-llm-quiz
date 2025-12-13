@@ -353,7 +353,12 @@ async def solve_quiz_pipeline(
                                 # ZIP file with logs data
                                 merged_context['logs_data'] = data.get('logs_data', [])
                                 merged_context['zip_files'] = data.get('files', {})
-                                logger.info(f"     → ZIP: {len(data.get('logs_data', []))} log entries")
+                                # FIX #1: Store ZIP DataFrame directly
+                                if 'dataframe' in data:
+                                    merged_context['dataframe'] = data['dataframe']
+                                    logger.info(f"     → ZIP DataFrame: {data['dataframe'].shape}")
+                                else:
+                                    logger.info(f"     → ZIP: {len(data.get('logs_data', []))} log entries")
                             else:
                                 merged_context[f'data_{len(merged_context)}'] = data
                                 logger.info(f"     → Dict with keys: {list(data.keys())[:5]}")
@@ -421,9 +426,8 @@ async def solve_quiz_pipeline(
                     logger.info(f"   ✓ LLM-driven answer: {str(answer)[:100]}...")
                 except Exception as e:
                     logger.error(f"   ❌ LLM analysis failed: {e}")
-                    # Ultimate fallback
-                    answer = "start"
-                    logger.info(f"   ✓ Using 'start' as fallback")
+                    # FIX #4: Don't use generic 'start' fallback - re-raise error
+                    raise Exception(f"Failed to generate answer: {e}") from e
                 
                 # ==================== STAGE 8: FORMAT ANSWER ====================
                 logger.info("")

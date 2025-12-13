@@ -114,7 +114,10 @@ async def download_and_parse_pdf(url: str) -> dict[str, Any]:
 
 
 async def download_and_parse_zip(url: str) -> dict[str, Any]:
-    """Download and parse ZIP files containing logs (JSONL format)."""
+    """Download and parse ZIP files containing logs (JSONL format).
+    
+    FIX #1: Returns DataFrame directly for easy analysis.
+    """
     import zipfile
     import json
     
@@ -144,6 +147,12 @@ async def download_and_parse_zip(url: str) -> dict[str, Any]:
                                 pass
         
         logger.info(f"Extracted ZIP: {len(result['files'])} files, {len(result['logs_data'])} log entries")
+        
+        # FIX #1: Convert logs_data to DataFrame immediately
+        if result['logs_data']:
+            result['dataframe'] = pd.DataFrame(result['logs_data'])
+            logger.info(f"   ✓ Created DataFrame from ZIP: {result['dataframe'].shape}")
+        
     except Exception as e:
         logger.warning(f"ZIP parsing failed: {e}")
     

@@ -12,13 +12,26 @@ from .logging_utils import logger
 
 
 async def execute_analysis_code(code: str, df: pd.DataFrame) -> tuple[Any, str, Optional[str]]:
-    """Execute generated pandas code safely."""
+    """Execute generated pandas code safely.
+    
+    FIX #2: Added missing imports (requests, re, datetime).
+    """
+    
+    # FIX #2: Import additional modules that LLM code might need
+    import requests
+    import re
+    import datetime
+    import json
     
     # Create sandbox namespace
     namespace = {
         "df": df.copy(),
         "pd": pd,
         "np": np,
+        "requests": requests,  # FIX #2
+        "re": re,  # FIX #2
+        "datetime": datetime,  # FIX #2
+        "json": json,  # FIX #2
         "answer": None
     }
     

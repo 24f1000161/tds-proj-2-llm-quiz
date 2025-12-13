@@ -511,7 +511,8 @@ IMPORTANT: If the question mentions scraping a URL or getting data from a page, 
 Look for patterns like "Scrape <url>", "Get data from <url>", "Visit <url>", etc."""
         
         try:
-            response = await self.generate(classify_prompt, max_tokens=600, json_response=True)
+            # FIX #3: Use timeout=40 for classification to prevent timeouts
+            response = await self.generate(classify_prompt, max_tokens=600, json_response=True, timeout=40)
             response = response.strip()
             if response.startswith("```"):
                 lines = response.split("\n")
@@ -609,35 +610,29 @@ Generate ONLY 2-3 lines of Python code (no imports, no file reading):
         
         context_str = "\n".join(context_summary) if context_summary else "- No special data sources"
         
-        classify_prompt = f"""Analyze this quiz question and classify the task type.
+        # FIX #3: Simplified prompt for faster classification (< 20s)
+        classify_prompt = f"""Classify this quiz question into ONE task type.
 
 QUESTION: {question}
 
-AVAILABLE CONTEXT:
-{context_str}
+CONTEXT: {context_str}
 
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON:
 {{
-    "task_type": "image_analysis|api_call|data_analysis|command_generation|audio_transcription|text_extraction|csv_to_json|chart_selection|other",
-    "answer_format": "hex_color|integer|float|json|command_string|text_phrase|csv_json|boolean|other",
+    "task_type": "image_analysis|api_call|data_analysis|command_generation|audio_transcription|text_extraction|csv_to_json|other",
+    "answer_format": "hex_color|integer|float|json|command_string|text_phrase|boolean|other",
     "has_personalization": true/false,
-    "personalization_type": "email_length_mod_2|email_length_mod_3|email_length_mod_5|email_checksum|none",
-    "requires_api": true/false,
-    "api_type": "github|custom|none",
-    "requires_data_transformation": true/false,
-    "transformations": ["snake_case", "iso_dates", "integer_values", "sorted_by_id"],
+    "personalization_type": "email_length_mod_2|email_length_mod_3|email_length_mod_5|none",
     "confidence": 0.0-1.0,
-    "reasoning": "brief explanation of classification"
+    "reasoning": "1-2 words"
 }}
 
-Classification logic:
-- If question mentions image/color/rgb/hex → image_analysis
-- If question mentions API/GitHub/repos/trees → api_call  
-- If question mentions DataFrame/CSV/JSON transformation → data_analysis or csv_to_json
-- If question mentions shell/command/git/uv → command_generation
-- If question mentions audio/transcript/spoken → audio_transcription
-- If question mentions email length/offset/mod → has_personalization=true
-- Look for personalization patterns: "length of your email", "email mod", "offset"
+Rules:
+- Image/color → image_analysis
+- API/GitHub → api_call
+- DataFrame/CSV/JSON/logs → data_analysis
+- Command/shell/git/uv → command_generation
+- Email length/mod/offset → has_personalization=true
 
 Answer:"""
         
