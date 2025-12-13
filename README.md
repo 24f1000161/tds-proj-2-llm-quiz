@@ -14,14 +14,16 @@ An automated quiz solving agent powered by LLM with 3-minute deadline support.
 
 ## Features
 
-- FastAPI-based REST API
-- Playwright browser automation for Vue.js/React/Angular SPAs
-- Dual LLM strategy (aipipe + Gemini fallback via [aipipe.org](https://aipipe.org))
-- Audio transcription support (via Gemini)
-- Automatic data extraction from PDFs, CSVs, Excel files
-- Dynamic LLM-generated analysis code
-- 3-minute per-question deadline enforcement
-- Chained quiz support
+- **Dynamic Task Classification**: LLM analyzes questions to determine task type, answer format, and personalization needs
+- **Generic Task Handlers**: 9 specialized handlers that work for ANY question variation (no hardcoded patterns)
+- **FastAPI-based REST API**: Production-ready endpoint for quiz submissions
+- **Playwright browser automation**: Full support for Vue.js/React/Angular SPAs with dynamic content
+- **Dual LLM strategy**: aipipe + Gemini fallback via [aipipe.org](https://aipipe.org)
+- **Multi-modal support**: Audio transcription (Gemini), image analysis, PDF extraction
+- **Automatic data extraction**: PDFs, CSVs, Excel, JSON, ZIP files
+- **Smart personalization**: Automatic detection and calculation of email-based offsets
+- **3-minute deadline enforcement**: Strict timing with safety buffers
+- **Chained quiz support**: Follows quiz chains until completion
 
 ## Project Structure
 
@@ -32,15 +34,40 @@ quiz_solver/
 ├── main.py              # Entry point
 ├── config.py            # Configuration management
 ├── models.py            # Pydantic models
-├── pipeline.py          # Main quiz solving pipeline
+├── pipeline.py          # Main quiz solving pipeline (9-stage)
 ├── browser.py           # Playwright browser automation
-├── llm_client.py        # LLM client with dual-model strategy
+├── llm_client.py        # LLM client with dynamic task classification
+├── llm_analysis.py      # LLM-driven analysis with dynamic routing
+├── task_handlers.py     # Generic handlers for all task types (NEW)
 ├── data_sourcing.py     # Data fetching and parsing
 ├── question_parser.py   # Question extraction utilities
 ├── analysis.py          # Data analysis execution
 ├── submission.py        # Answer submission
 └── logging_utils.py     # Logging utilities
 ```
+
+## Architecture
+
+### Dynamic Task Routing (NEW)
+
+The system uses a 3-step intelligent routing approach:
+
+1. **LLM Classification**: Analyzes question to determine:
+   - Task type (image_analysis, api_call, data_analysis, command_generation, etc.)
+   - Answer format (hex_color, integer, json, command_string, etc.)
+   - Personalization requirements (email_length_mod_2, etc.)
+
+2. **Handler Routing**: Routes to appropriate generic handler:
+   - `handle_image_task()` - ANY image question
+   - `handle_api_task()` - ANY API call (GitHub, REST, custom)
+   - `handle_data_analysis_task()` - ANY pandas operation
+   - `handle_command_task()` - ANY shell command
+   - And 5 more specialized handlers
+
+3. **Generic Execution**: Handler solves question using LLM guidance
+   - Works for ANY phrasing or variation
+   - No hardcoded keyword matching
+   - Automatic personalization offset calculation
 
 ## Installation
 
